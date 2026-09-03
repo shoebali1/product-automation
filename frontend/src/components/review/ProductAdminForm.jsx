@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import RichEditor from "../RichEditor";
 
 export default function ProductAdminForm({ draft, onChange, locked }) {
   const [detailsTab, setDetailsTab] = useState("Pricing"); // "Pricing" | "Restock" | "SEO"
@@ -17,43 +18,40 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
     });
   };
 
-  // Format highlights to string if array, or update
-  const highlightsText = useMemo(() => {
+  // Format highlights to HTML string if array or string
+  const highlightsHtml = useMemo(() => {
     if (typeof draft.highlights === "string") return draft.highlights;
     if (Array.isArray(draft.highlights)) {
-      return draft.highlights.map((h) => (typeof h === "object" ? `${h.name ? h.name + ": " : ""}${h.value || ""}` : String(h))).join("\n");
+      const items = draft.highlights
+        .map((h) => {
+          if (typeof h === "object" && h !== null) {
+            return h.name ? `<strong>${h.name}:</strong> ${h.value || ""}` : (h.value || "");
+          }
+          return String(h);
+        })
+        .filter(Boolean);
+      return items.length ? `<ul>${items.map((it) => `<li>${it}</li>`).join("")}</ul>` : "";
     }
     return "";
   }, [draft.highlights]);
 
-  const handleHighlightsChange = (text) => {
-    const lines = text.split("\n").filter((line) => line.trim());
-    const structured = lines.map((line, i) => {
-      const parts = line.split(":");
-      if (parts.length > 1) {
-        return { name: parts[0].trim(), value: parts.slice(1).join(":").trim() };
-      }
-      return { name: `Highlight ${i + 1}`, value: line.trim() };
-    });
-    onChange({ ...draft, highlights: structured });
-  };
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
 
   // Image helpers
   const images = draft.images || [];
   const addImage = () => {
-    onChange({
-      ...draft,
-      images: [
-        ...images,
-        {
-          url: "",
-          title: "",
-          alt: "",
-          primary_candidate: images.length === 0,
-          reference_only: true,
-        },
-      ],
-    });
+    const newImages = [
+      ...images,
+      {
+        url: "",
+        title: "",
+        alt: "",
+        primary_candidate: images.length === 0,
+        reference_only: true,
+      },
+    ];
+    onChange({ ...draft, images: newImages });
+    setActiveImageIndex(newImages.length - 1);
   };
 
   const updateImage = (index, field, value) => {
@@ -61,16 +59,74 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
       if (i === index) {
         return { ...img, [field]: value };
       }
-      if (field === "primary_candidate" && value === true) {
-        return { ...img, primary_candidate: false };
-      }
       return img;
     });
     onChange({ ...draft, images: updated });
   };
 
+  const setPrimaryImage = (index) => {
+    const updated = images.map((img, i) => ({
+      ...img,
+      primary_candidate: i === index,
+    }));
+    onChange({ ...draft, images: updated });
+    setActiveImageIndex(index);
+  };
+
   const removeImage = (index) => {
-    onChange({ ...draft, images: images.filter((_, i) => i !== index) });
+    const next = images.filter((_, i) => i !== index);
+    onChange({ ...draft, images: next });
+    if (activeImageIndex >= next.length) {
+      setActiveImageIndex(Math.max(0, next.length - 1));
+    }
+  };
+
+  // Variations helpers
+  const variations = draft.variations || [];
+  const addVariation = () => {
+    onChange({
+      ...draft,
+      variations: [
+        ...variations,
+        { name: "", price: null, mrp: null, sku: null, attributes: {} },
+      ],
+    });
+  };
+
+  const updateVariation = (index, field, value) => {
+    const updated = variations.map((v, i) => (i === index ? { ...v, [field]: value } : v));
+    onChange({ ...draft, variations: updated });
+  };
+
+  const removeVariation = (index) => {
+    onChange({
+      ...draft,
+      variations: variations.filter((_, i) => i !== index),
+    });
+  };
+
+  // Packs helpers
+  const packs = draft.packs || [];
+  const addPack = () => {
+    onChange({
+      ...draft,
+      packs: [
+        ...packs,
+        { label: "", quantity: null, price: null, mrp: null, sku: null },
+      ],
+    });
+  };
+
+  const updatePack = (index, field, value) => {
+    const updated = packs.map((p, i) => (i === index ? { ...p, [field]: value } : p));
+    onChange({ ...draft, packs: updated });
+  };
+
+  const removePack = (index) => {
+    onChange({
+      ...draft,
+      packs: packs.filter((_, i) => i !== index),
+    });
   };
 
   const wordCount = (str) => (str ? str.trim().split(/\s+/).filter(Boolean).length : 0);
@@ -81,12 +137,12 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
       {/* LEFT COLUMN: Main Form Fields (2 Cols) */}
       <div className="space-y-6 lg:col-span-2">
         {/* PRODUCT TITLE */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <label className="block text-xs font-black uppercase tracking-wider text-slate-500">
-            Product Title *
+        <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-xs transition-shadow hover:shadow-sm">
+          <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">
+            Product Title <span className="text-rose-500">*</span>
           </label>
           <input
-            className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-sm font-bold text-ink-950 placeholder:text-slate-400 focus:border-brand-600 focus:bg-white focus:outline-none"
+            className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-sm font-bold text-ink-950 placeholder:text-slate-400 focus:border-brand-600 focus:bg-white focus:outline-none focus:ring-3 focus:ring-brand-500/15 transition-all"
             disabled={locked}
             onChange={(e) => setField("product_title", e.target.value)}
             placeholder="e.g. Surgical Gloves Medium — Box of 100"
@@ -95,12 +151,15 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
         </div>
 
         {/* BUSINESS PRODUCT TITLE */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <label className="block text-xs font-black uppercase tracking-wider text-slate-500">
-            Business Product Title
-          </label>
+        <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-xs transition-shadow hover:shadow-sm">
+          <div className="flex items-center justify-between">
+            <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">
+              Business Product Title
+            </label>
+            <span className="text-[11px] text-slate-400">Internal / B2B listing title</span>
+          </div>
           <input
-            className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-sm font-bold text-ink-950 placeholder:text-slate-400 focus:border-brand-600 focus:bg-white focus:outline-none"
+            className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-sm font-bold text-ink-950 placeholder:text-slate-400 focus:border-brand-600 focus:bg-white focus:outline-none focus:ring-3 focus:ring-brand-500/15 transition-all"
             disabled={locked}
             onChange={(e) => setField("business_product_title", e.target.value)}
             placeholder="e.g. Surgical Gloves Medium — Box of 100"
@@ -108,185 +167,386 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
           />
         </div>
 
-        {/* MEDIA / IMAGES */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex items-center justify-between">
-            <label className="block text-xs font-black uppercase tracking-wider text-slate-500">
-              Media ({images.length} images)
-            </label>
+        {/* IMAGES */}
+        <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-xs transition-shadow hover:shadow-sm">
+          <div className="flex items-center gap-2">
+            <svg className="h-4 w-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+            </svg>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">
+              IMAGES
+            </h3>
+          </div>
+
+          <p className="mt-3 text-xs text-slate-600 flex items-center gap-1.5">
+            <span>Click the</span>
+            <span className="text-amber-500 text-sm">⭐</span>
+            <span>icon on any image to set it as the primary product image.</span>
+          </p>
+
+          <div className="mt-4 flex flex-wrap items-start gap-4">
+            {images.map((img, index) => {
+              const isPrimary = Boolean(img.primary_candidate);
+              const isSelected = activeImageIndex === index;
+              return (
+                <div
+                  className={`group relative h-28 w-28 shrink-0 cursor-pointer overflow-hidden rounded-2xl border-2 transition-all ${
+                    isPrimary
+                      ? "border-blue-500 ring-2 ring-blue-400/30"
+                      : isSelected
+                      ? "border-brand-500 ring-2 ring-brand-400/20"
+                      : "border-slate-200 hover:border-slate-300"
+                  } bg-slate-950`}
+                  key={index}
+                  onClick={() => setActiveImageIndex(index)}
+                >
+                  {/* Star Primary Button */}
+                  <button
+                    className={`absolute top-1.5 left-1.5 z-10 flex h-6 w-6 items-center justify-center rounded-full text-xs shadow-sm transition-transform hover:scale-110 active:scale-95 cursor-pointer ${
+                      isPrimary
+                        ? "bg-amber-400 text-white ring-1 ring-amber-500"
+                        : "bg-white/85 text-slate-400 hover:bg-amber-400 hover:text-white"
+                    }`}
+                    disabled={locked}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPrimaryImage(index);
+                    }}
+                    title="Set as primary image"
+                    type="button"
+                  >
+                    ★
+                  </button>
+
+                  {/* Remove Button */}
+                  <button
+                    className="absolute top-1.5 right-1.5 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-rose-500 text-white text-xs shadow-sm transition-transform hover:scale-110 hover:bg-rose-600 active:scale-95 cursor-pointer"
+                    disabled={locked}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeImage(index);
+                    }}
+                    title="Remove image"
+                    type="button"
+                  >
+                    ✕
+                  </button>
+
+                  {/* Image Element */}
+                  {img.url ? (
+                    <img
+                      alt={img.alt || img.title || "Product image"}
+                      className="h-full w-full object-contain p-1"
+                      src={img.url}
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center bg-slate-100 text-[10px] font-bold text-slate-400">
+                      No URL
+                    </div>
+                  )}
+
+                  {/* Primary Pill Badge */}
+                  {isPrimary && (
+                    <span className="absolute bottom-1.5 left-1/2 -translate-x-1/2 z-10 rounded-full bg-blue-600 px-2.5 py-0.5 text-[10px] font-bold text-white shadow-sm">
+                      Primary
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* Add photo dashed button */}
             <button
-              className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-bold text-ink-700 hover:bg-slate-200 disabled:opacity-50"
+              className="flex h-28 w-28 shrink-0 flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50/50 text-slate-400 transition-all hover:border-brand-500 hover:bg-brand-50/30 hover:text-brand-700 cursor-pointer disabled:opacity-50"
               disabled={locked}
               onClick={addImage}
               type="button"
             >
-              + Add Image URL
+              <span className="text-2xl font-light leading-none">+</span>
+              <span className="mt-1 text-xs font-semibold">Add photo</span>
             </button>
           </div>
 
-          <div className="mt-4 rounded-xl border-2 border-dashed border-indigo-200 bg-indigo-50/30 p-6 text-center">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
-              <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-              </svg>
-            </div>
-            <p className="mt-2 text-sm font-extrabold text-indigo-900">
-              Scraped product media preview & gallery
-            </p>
-            <p className="text-xs text-slate-500">PNG, JPG, WEBP — automatically extracted & verified</p>
-          </div>
-
-          {images.length > 0 && (
-            <div className="mt-4 space-y-4">
-              {images.map((img, index) => (
-                <div
-                  className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-slate-50/50 p-4 sm:flex-row sm:items-center"
-                  key={index}
-                >
-                  <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-white">
-                    {img.url ? (
-                      <img alt={img.alt || "Product"} className="h-full w-full object-contain p-1" src={img.url} />
-                    ) : (
-                      <span className="text-[10px] text-slate-400 font-bold">No Preview</span>
-                    )}
-                  </div>
-
-                  <div className="min-w-0 flex-1 space-y-2">
-                    <input
-                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold"
-                      disabled={locked}
-                      onChange={(e) => updateImage(index, "url", e.target.value)}
-                      placeholder="Image URL"
-                      value={img.url || ""}
-                    />
-                    <div className="grid grid-cols-2 gap-2">
-                      <input
-                        className="rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs"
-                        disabled={locked}
-                        onChange={(e) => updateImage(index, "title", e.target.value)}
-                        placeholder="Image Title"
-                        value={img.title || ""}
-                      />
-                      <input
-                        className="rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs"
-                        disabled={locked}
-                        onChange={(e) => updateImage(index, "alt", e.target.value)}
-                        placeholder="Image Alt text"
-                        value={img.alt || ""}
-                      />
-                    </div>
-                    <div className="flex items-center justify-between pt-1">
-                      <label className="flex items-center gap-2 text-xs font-bold text-ink-700">
-                        <input
-                          checked={img.primary_candidate || false}
-                          disabled={locked}
-                          onChange={(e) => updateImage(index, "primary_candidate", e.target.checked)}
-                          type="checkbox"
-                        />
-                        Primary Image (Index {index})
-                      </label>
-                      <button
-                        className="text-xs font-bold text-rose-600 hover:underline"
-                        disabled={locked}
-                        onClick={() => removeImage(index)}
-                        type="button"
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
+          {/* Details input for the selected image */}
+          {images[activeImageIndex] && (
+            <div className="mt-4 max-w-sm space-y-2.5 pt-2">
+              <input
+                className="field text-xs font-medium"
+                disabled={locked}
+                onChange={(e) => updateImage(activeImageIndex, "title", e.target.value)}
+                placeholder="Title"
+                value={images[activeImageIndex].title || ""}
+              />
+              <input
+                className="field text-xs font-medium"
+                disabled={locked}
+                onChange={(e) => updateImage(activeImageIndex, "alt", e.target.value)}
+                placeholder="Alt text"
+                value={images[activeImageIndex].alt || ""}
+              />
+              <input
+                className="field text-xs font-medium text-slate-600"
+                disabled={locked}
+                onChange={(e) => updateImage(activeImageIndex, "url", e.target.value)}
+                placeholder="Image URL (paste or edit)"
+                value={images[activeImageIndex].url || ""}
+              />
             </div>
           )}
         </div>
 
         {/* HIGHLIGHTS */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex items-center justify-between">
-            <label className="block text-xs font-black uppercase tracking-wider text-slate-500">
-              Highlights
-            </label>
-            <span className="text-[11px] font-semibold text-slate-400">
-              Short selling points shown on the listing page
-            </span>
+        <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-xs transition-shadow hover:shadow-sm">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">
+                Highlights
+              </label>
+              <p className="text-[11px] font-medium text-slate-400">
+                Short key selling points shown on the listing page
+              </p>
+            </div>
           </div>
 
-          <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
-            {/* Formatting Toolbar */}
-            <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600">
-              <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200">Paragraph</span>
-              <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200">sans-serif</span>
-              <span className="px-1.5 py-0.5 font-black text-slate-900">B</span>
-              <span className="px-1.5 py-0.5 italic text-slate-900">I</span>
-              <span className="px-1.5 py-0.5 underline text-slate-900">U</span>
-              <span className="text-slate-300">|</span>
-              <span>• Bullet list</span>
-              <span>1. Numbered list</span>
-            </div>
-            <textarea
-              className="w-full resize-y p-4 text-sm leading-relaxed text-ink-950 placeholder:text-slate-400 focus:outline-none"
+          <div className="overflow-hidden rounded-xl border border-slate-200">
+            <RichEditor
               disabled={locked}
-              onChange={(e) => handleHighlightsChange(e.target.value)}
-              placeholder="• Latex-free • Sterile, single use • CE certified"
-              rows={4}
-              value={highlightsText}
+              height="260px"
+              id="product-highlights-editor"
+              onChange={(html) => setField("highlights", html)}
+              placeholder="Add product highlights, bullet points, key features..."
+              value={highlightsHtml}
             />
-            <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-2 text-right text-[11px] font-medium text-slate-400">
-              {wordCount(highlightsText)} words | {charCount(highlightsText)} characters
-            </div>
           </div>
         </div>
 
         {/* FULL DESCRIPTION */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex items-center justify-between">
-            <label className="block text-xs font-black uppercase tracking-wider text-slate-500">
-              Full Description
-            </label>
-            <span className="text-[11px] font-semibold text-slate-400">
-              Detailed product description, usage instructions, specifications
-            </span>
+        <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-xs transition-shadow hover:shadow-sm">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">
+                Full Description
+              </label>
+              <p className="text-[11px] font-medium text-slate-400">
+                Detailed product description, usage instructions, specifications
+              </p>
+            </div>
           </div>
 
-          <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
-            {/* Formatting Toolbar */}
-            <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600">
-              <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200">Paragraph</span>
-              <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200">sans-serif</span>
-              <span className="px-1.5 py-0.5 font-black text-slate-900">B</span>
-              <span className="px-1.5 py-0.5 italic text-slate-900">I</span>
-              <span className="px-1.5 py-0.5 underline text-slate-900">U</span>
-              <span className="text-slate-300">|</span>
-              <span>• Bullet list</span>
-              <span>1. Numbered list</span>
-            </div>
-            <textarea
-              className="w-full resize-y p-4 text-sm leading-relaxed text-ink-950 placeholder:text-slate-400 focus:outline-none"
+          <div className="overflow-hidden rounded-xl border border-slate-200">
+            <RichEditor
               disabled={locked}
-              onChange={(e) => setField("description", e.target.value)}
-              placeholder="Detailed product description..."
-              rows={8}
+              height="380px"
+              id="product-description-editor"
+              onChange={(html) => setField("description", html)}
+              placeholder="Detailed product description, usage instructions, specifications..."
               value={draft.description || ""}
             />
-            <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-2 text-right text-[11px] font-medium text-slate-400">
-              {wordCount(draft.description)} words | {charCount(draft.description)} characters
+          </div>
+        </div>
+
+        {/* VARIATIONS (Added after Description matching reference) */}
+        <div className="rounded-2xl border border-slate-200/90 bg-white shadow-xs overflow-hidden transition-shadow hover:shadow-sm">
+          <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+            <div className="flex items-center gap-2.5">
+              <svg className="h-4 w-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+              </svg>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                VARIATIONS {variations.length > 0 && <span className="text-slate-400 font-normal">({variations.length})</span>}
+              </h3>
             </div>
+            <button
+              className="inline-flex items-center gap-1 rounded-xl bg-blue-50 px-3.5 py-1.5 text-xs font-bold text-blue-600 hover:bg-blue-100 transition-colors disabled:opacity-50 cursor-pointer"
+              disabled={locked}
+              onClick={addVariation}
+              type="button"
+            >
+              + Add variation
+            </button>
+          </div>
+
+          <div className="p-6">
+            {variations.length === 0 ? (
+              <div className="py-10 text-center text-sm font-medium text-slate-400">
+                No variations yet
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {variations.map((item, index) => (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-4 transition-all hover:bg-white hover:shadow-xs" key={index}>
+                    <div className="flex items-center justify-between border-b border-slate-200/70 pb-3">
+                      <span className="text-xs font-bold text-slate-700">Variation #{index + 1}</span>
+                      <button
+                        className="text-xs font-bold text-rose-600 hover:text-rose-700 transition-colors disabled:opacity-50"
+                        disabled={locked}
+                        onClick={() => removeVariation(index)}
+                        type="button"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">Name / Title *</label>
+                        <input
+                          className="field mt-1 text-xs font-semibold"
+                          disabled={locked}
+                          onChange={(e) => updateVariation(index, "name", e.target.value)}
+                          placeholder="e.g. Size: Large, Color: Blue"
+                          value={item.name || ""}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">SKU</label>
+                        <input
+                          className="field mt-1 text-xs font-mono"
+                          disabled={locked}
+                          onChange={(e) => updateVariation(index, "sku", e.target.value || null)}
+                          placeholder="SKU"
+                          value={item.sku || ""}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">Price (₹)</label>
+                        <input
+                          className="field mt-1 text-xs font-bold text-brand-700"
+                          disabled={locked}
+                          onChange={(e) => updateVariation(index, "price", e.target.value === "" ? null : Number(e.target.value))}
+                          placeholder="0.00"
+                          step="0.01"
+                          type="number"
+                          value={item.price ?? ""}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">MRP (₹)</label>
+                        <input
+                          className="field mt-1 text-xs"
+                          disabled={locked}
+                          onChange={(e) => updateVariation(index, "mrp", e.target.value === "" ? null : Number(e.target.value))}
+                          placeholder="0.00"
+                          step="0.01"
+                          type="number"
+                          value={item.mrp ?? ""}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* PACKS (Added after Variations matching reference) */}
+        <div className="rounded-2xl border border-slate-200/90 bg-white shadow-xs overflow-hidden transition-shadow hover:shadow-sm">
+          <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+            <div className="flex items-center gap-2.5">
+              <svg className="h-4 w-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+              </svg>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                PACKS {packs.length > 0 && <span className="text-slate-400 font-normal">({packs.length})</span>}
+              </h3>
+            </div>
+            <button
+              className="inline-flex items-center gap-1 rounded-xl bg-blue-50 px-3.5 py-1.5 text-xs font-bold text-blue-600 hover:bg-blue-100 transition-colors disabled:opacity-50 cursor-pointer"
+              disabled={locked}
+              onClick={addPack}
+              type="button"
+            >
+              + Add pack
+            </button>
+          </div>
+
+          <div className="p-6">
+            {packs.length === 0 ? (
+              <div className="py-10 text-center text-sm font-medium text-slate-400">
+                No packs yet
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {packs.map((item, index) => (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-4 transition-all hover:bg-white hover:shadow-xs" key={index}>
+                    <div className="flex items-center justify-between border-b border-slate-200/70 pb-3">
+                      <span className="text-xs font-bold text-slate-700">Pack #{index + 1}</span>
+                      <button
+                        className="text-xs font-bold text-rose-600 hover:text-rose-700 transition-colors disabled:opacity-50"
+                        disabled={locked}
+                        onClick={() => removePack(index)}
+                        type="button"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                      <div className="lg:col-span-2">
+                        <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">Label *</label>
+                        <input
+                          className="field mt-1 text-xs font-semibold"
+                          disabled={locked}
+                          onChange={(e) => updatePack(index, "label", e.target.value)}
+                          placeholder="e.g. Pack of 50, Box of 100"
+                          value={item.label || ""}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">Quantity</label>
+                        <input
+                          className="field mt-1 text-xs font-bold"
+                          disabled={locked}
+                          onChange={(e) => updatePack(index, "quantity", e.target.value === "" ? null : Number(e.target.value))}
+                          placeholder="1"
+                          step="1"
+                          type="number"
+                          value={item.quantity ?? ""}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">Price (₹)</label>
+                        <input
+                          className="field mt-1 text-xs font-bold text-brand-700"
+                          disabled={locked}
+                          onChange={(e) => updatePack(index, "price", e.target.value === "" ? null : Number(e.target.value))}
+                          placeholder="0.00"
+                          step="0.01"
+                          type="number"
+                          value={item.price ?? ""}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">MRP (₹)</label>
+                        <input
+                          className="field mt-1 text-xs"
+                          disabled={locked}
+                          onChange={(e) => updatePack(index, "mrp", e.target.value === "" ? null : Number(e.target.value))}
+                          placeholder="0.00"
+                          step="0.01"
+                          type="number"
+                          value={item.mrp ?? ""}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
         {/* PRODUCT DETAILS TABS (Pricing / Restock / SEO) */}
-        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-          <div className="border-b border-slate-200 bg-slate-50 px-6 pt-4">
-            <p className="text-xs font-black uppercase tracking-wider text-slate-500 mb-3">
+        <div className="rounded-2xl border border-slate-200/90 bg-white shadow-xs overflow-hidden transition-shadow hover:shadow-sm">
+          <div className="border-b border-slate-200/80 bg-slate-50/70 px-6 pt-4">
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">
               Product Details
             </p>
             <div className="flex gap-2">
               {["Pricing", "Restock", "SEO"].map((tab) => (
                 <button
-                  className={`rounded-t-xl px-5 py-2.5 text-xs font-black transition-all ${
+                  className={`rounded-t-xl px-5 py-2.5 text-xs font-bold transition-all cursor-pointer ${
                     detailsTab === tab
-                      ? "border-t-2 border-brand-600 bg-white text-brand-700 shadow-sm"
+                      ? "border-t-2 border-brand-600 bg-white text-brand-700 shadow-xs"
                       : "text-slate-600 hover:text-ink-950 hover:bg-slate-100"
                   }`}
                   key={tab}
@@ -318,7 +578,7 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
                 <div>
                   <label className="block text-xs font-bold text-slate-700">Sale price (₹) *</label>
                   <input
-                    className="field mt-1 font-bold"
+                    className="field mt-1 font-bold text-brand-700"
                     disabled={locked}
                     onChange={(e) => setNested("pricing", "sale_price", e.target.value === "" ? null : Number(e.target.value))}
                     placeholder="0.00"
@@ -497,10 +757,15 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
       {/* RIGHT COLUMN: Sidebar Controls */}
       <div className="space-y-6">
         {/* STATUS CARD (iOS-style toggles matching screenshots) */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <p className="text-xs font-black uppercase tracking-wider text-slate-500 mb-4">
-            STATUS
-          </p>
+        <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-xs transition-shadow hover:shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+              STATUS
+            </p>
+            <span className="text-[10px] font-bold text-brand-700 bg-brand-50 px-2 py-0.5 rounded-full border border-brand-100">
+              Storefront Toggles
+            </span>
+          </div>
           <div className="divide-y divide-slate-100">
             <ToggleRow
               description="Visible on storefront"
@@ -570,8 +835,8 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
         </div>
 
         {/* IDENTIFIERS CARD */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
-          <p className="text-xs font-black uppercase tracking-wider text-slate-500">
+        <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-xs transition-shadow hover:shadow-sm space-y-4">
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
             IDENTIFIERS
           </p>
           <div>
@@ -696,8 +961,8 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
         </div>
 
         {/* RELATED PRODUCTS CARD */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <p className="text-xs font-black uppercase tracking-wider text-slate-500">
+        <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-xs transition-shadow hover:shadow-sm">
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
             RELATED PRODUCTS
           </p>
           <p className="mt-1 text-xs text-slate-500">Products shown alongside this item</p>
@@ -720,13 +985,13 @@ function ToggleRow({ icon, label, description, value, onChange, disabled }) {
       <div className="flex items-center gap-3">
         <span className="text-sm">{icon}</span>
         <div>
-          <p className="text-xs font-black text-ink-950">{label}</p>
+          <p className="text-xs font-bold text-ink-950">{label}</p>
           <p className="text-[11px] text-slate-500">{description}</p>
         </div>
       </div>
       <button
         aria-checked={value}
-        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-50 ${
+        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-brand-500/20 disabled:opacity-50 ${
           value ? "bg-brand-600" : "bg-slate-200"
         }`}
         disabled={disabled}
@@ -743,4 +1008,3 @@ function ToggleRow({ icon, label, description, value, onChange, disabled }) {
     </div>
   );
 }
-

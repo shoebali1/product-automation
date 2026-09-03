@@ -33,58 +33,74 @@ export default function ProductResearchPage() {
   const removeUrl = (index) => setUrls((items) => items.filter((_, itemIndex) => itemIndex !== index));
 
   return (
-    <div className="mx-auto max-w-5xl">
-      <div className="mb-8 max-w-3xl">
-        <p className="mb-2 text-xs font-extrabold uppercase tracking-[0.2em] text-brand-600">New research job</p>
-        <h1 className="text-3xl font-black tracking-tight text-ink-950 sm:text-4xl">Build one product record from multiple sources.</h1>
-        <p className="mt-3 max-w-2xl text-base leading-7 text-ink-700">
-          Add product pages for the same item. The system extracts facts, compares evidence, flags disagreements, and prepares a reviewable draft.
+    <div className="mx-auto max-w-5xl space-y-6">
+      <div className="max-w-3xl">
+        <p className="text-xs font-bold uppercase tracking-wider text-brand-600">New research job</p>
+        <h1 className="mt-1 text-3xl font-black tracking-tight text-ink-950 sm:text-4xl">
+          Build one product record from multiple sources
+        </h1>
+        <p className="mt-2 text-xs text-slate-500 max-w-2xl leading-relaxed">
+          Add product page URLs for the same item. The system automatically scrapes facts, compares multi-source evidence, flags disagreements, and synthesizes an admin-ready draft.
         </p>
       </div>
 
       <section className="panel overflow-hidden">
-        <div className="border-b border-slate-200 bg-slate-50/80 px-5 py-4 sm:px-7">
+        <div className="border-b border-slate-100 bg-slate-50/70 px-6 py-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="font-extrabold text-ink-950">Product source URLs</h2>
-              <p className="mt-1 text-sm text-ink-500">1 required · 4–5 recommended · 10 maximum</p>
+              <h2 className="text-sm font-bold text-ink-950">Product source URLs</h2>
+              <p className="text-[11px] text-slate-500">1 required · 4–5 recommended · 10 maximum</p>
             </div>
-            <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-ink-700 shadow-sm">{cleanedUrls.length}/10 added</span>
+            <span className="rounded-full bg-white border border-slate-200 px-3 py-1 text-xs font-bold text-slate-700 shadow-xs">
+              {cleanedUrls.length}/10 added
+            </span>
           </div>
         </div>
-        <div className="space-y-4 p-5 sm:p-7">
+        <div className="space-y-3.5 p-6">
           {urls.map((url, index) => (
             <div className="flex items-start gap-3" key={index}>
-              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-100 text-sm font-extrabold text-brand-700">{index + 1}</div>
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 border border-brand-100 text-xs font-black text-brand-700">
+                {index + 1}
+              </div>
               <div className="min-w-0 flex-1">
                 <label className="sr-only" htmlFor={`url-${index}`}>Product URL {index + 1}</label>
                 <input
-                  className={`field ${url && !isValidHttpUrl(url.trim()) ? "border-rose-400" : ""}`}
+                  className={`field text-xs ${url && !isValidHttpUrl(url.trim()) ? "border-rose-400 bg-rose-50/20" : ""}`}
                   id={`url-${index}`}
                   onChange={(event) => updateUrl(index, event.target.value)}
                   placeholder="https://store.example.com/product/..."
                   type="url"
                   value={url}
                 />
-                {url && !isValidHttpUrl(url.trim()) && <p className="mt-1 text-xs font-semibold text-rose-600">Enter a complete HTTP or HTTPS URL.</p>}
+                {url && !isValidHttpUrl(url.trim()) && (
+                  <p className="mt-1 text-[11px] font-semibold text-rose-600">Enter a complete HTTP or HTTPS URL.</p>
+                )}
               </div>
               {urls.length > 1 && (
-                <button className="mt-1 rounded-lg px-2 py-2 text-sm font-bold text-ink-500 hover:bg-rose-50 hover:text-rose-700" onClick={() => removeUrl(index)} type="button">
+                <button
+                  className="mt-1 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
+                  onClick={() => removeUrl(index)}
+                  type="button"
+                >
                   Remove
                 </button>
               )}
             </div>
           ))}
           {urls.length < 10 && (
-            <button className="rounded-xl border border-dashed border-brand-600/40 px-4 py-2.5 text-sm font-bold text-brand-700 hover:bg-brand-100" onClick={() => setUrls((items) => [...items, ""])} type="button">
+            <button
+              className="rounded-xl border border-dashed border-brand-300 bg-brand-50/30 px-4 py-2 text-xs font-bold text-brand-700 hover:bg-brand-50 transition-colors cursor-pointer"
+              onClick={() => setUrls((items) => [...items, ""])}
+              type="button"
+            >
               + Add another source
             </button>
           )}
         </div>
-        <div className="flex flex-col gap-3 border-t border-slate-200 bg-slate-50/60 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7">
-          <p className="text-sm text-ink-500">Duplicate and tracking-only URLs are removed automatically.</p>
+        <div className="flex flex-col gap-3 border-t border-slate-100 bg-slate-50/60 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-slate-500">Duplicate and tracking-only parameters are removed automatically.</p>
           <button
-            className="rounded-xl bg-brand-700 px-5 py-3 text-sm font-extrabold text-white shadow-sm hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-xl bg-gradient-to-r from-brand-600 to-brand-700 px-6 py-3 text-xs font-black text-white shadow-xs hover:from-brand-700 hover:to-brand-800 disabled:cursor-not-allowed disabled:opacity-50 transition-all cursor-pointer"
             disabled={!cleanedUrls.length || invalidCount > 0 || createJob.isPending}
             onClick={() => createJob.mutate()}
             type="button"
