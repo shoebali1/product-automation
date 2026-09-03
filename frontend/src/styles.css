@@ -118,3 +118,31 @@ textarea:focus-visible {
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
+
+/* RichEditor normal-mode height and content visibility fix */
+.re-container-wrap {
+  width: 100%;
+  position: relative;
+  box-sizing: border-box;
+}
+
+.re-container-wrap .re-wrap:not(.re-fullscreen) {
+  height: 100% !important;
+  min-height: 100% !important;
+  flex: 1 1 auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+.re-container-wrap .re-wrap:not(.re-fullscreen) .re-body {
+  flex: 1 1 0px !important;
+  min-height: 140px !important;
+  display: block !important;
+  overflow-y: auto !important;
+}
+
+.re-container-wrap .re-wrap:not(.re-fullscreen) .re-editor {
+  min-height: 140px !important;
+  display: block !important;
+}
+

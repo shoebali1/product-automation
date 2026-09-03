@@ -308,10 +308,10 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
             </div>
           </div>
 
-          <div className="overflow-hidden rounded-xl border border-slate-200">
+          <div className="overflow-hidden rounded-xl">
             <RichEditor
               disabled={locked}
-              height="260px"
+              height="320px"
               id="product-highlights-editor"
               onChange={(html) => setField("highlights", html)}
               placeholder="Add product highlights, bullet points, key features..."
@@ -333,10 +333,10 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
             </div>
           </div>
 
-          <div className="overflow-hidden rounded-xl border border-slate-200">
+          <div className="overflow-hidden rounded-xl">
             <RichEditor
               disabled={locked}
-              height="380px"
+              height="420px"
               id="product-description-editor"
               onChange={(html) => setField("description", html)}
               placeholder="Detailed product description, usage instructions, specifications..."

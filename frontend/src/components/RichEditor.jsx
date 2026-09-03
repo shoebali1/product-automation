@@ -66,6 +66,12 @@ export default function RichTextEditor({
         },
       });
 
+      // Explicitly size wrapEl so bodyEl flexes and displays content in normal view
+      if (editorRef.current?.wrapEl) {
+        editorRef.current.wrapEl.style.height = height || "320px";
+        editorRef.current.wrapEl.style.minHeight = height || "320px";
+      }
+
       if (initialValue && editorRef.current.setHTML) {
         editorRef.current.setHTML(initialValue);
       }
@@ -118,7 +124,9 @@ export default function RichTextEditor({
       id={id}
       ref={containerRef}
       style={{
+        height: height || "320px",
         minHeight: height || "320px",
+        width: "100%",
         display: "flex",
         flexDirection: "column",
       }}
