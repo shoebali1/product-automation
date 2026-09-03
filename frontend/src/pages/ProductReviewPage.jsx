@@ -141,52 +141,55 @@ export default function ProductReviewPage() {
 function QualityContext({ context }) {
   if (!context) return null;
   const metricOrder = ["readiness", "confidence", "completeness", "source_coverage"];
-  const tone = context.blockers.length ? "border-amber-200 bg-amber-50/40" : "border-emerald-200 bg-emerald-50/40";
+  const tone = context.blockers.length ? "border-amber-200 bg-amber-50/20" : "border-emerald-200 bg-emerald-50/20";
+  const gradeColor =
+    context.grade === "A"
+      ? "text-emerald-700 bg-emerald-50 border-emerald-200"
+      : context.grade === "B"
+      ? "text-teal-700 bg-teal-50 border-teal-200"
+      : context.grade === "C"
+      ? "text-amber-700 bg-amber-50 border-amber-200"
+      : "text-rose-700 bg-rose-50 border-rose-200";
+
   return (
     <section className={`panel overflow-hidden ${tone}`}>
-      <div className="p-5 sm:p-7">
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-2xl font-black text-brand-700 shadow-xs border border-slate-200/80">
-            {context.grade}
-          </span>
-          <div>
-            <h2 className="text-base font-black text-ink-950 sm:text-lg">{context.headline}</h2>
-            <p className="mt-0.5 max-w-3xl text-xs text-ink-700 leading-relaxed">{context.summary}</p>
+      {/* Header Info */}
+      <div className="p-5 sm:p-6">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-xl font-black shadow-xs border ${gradeColor}`}>
+              {context.grade}
+            </span>
+            <div>
+              <h2 className="text-base font-black text-ink-950 sm:text-lg">{context.headline}</h2>
+              <p className="mt-0.5 text-xs text-slate-500">{context.summary}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 rounded-xl bg-slate-100/80 px-3 py-1.5 text-xs font-bold text-slate-600">
+            <span>{context.sources.successful_sources} sources</span>
+            <span>·</span>
+            <span>{context.sources.independent_domains} domains</span>
+            <span>·</span>
+            <span>{context.evidence.total_fields} compared fields</span>
           </div>
         </div>
-        <p className="mt-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-          Evidence: {context.sources.successful_sources} sources · {context.sources.independent_domains} domains · {context.evidence.total_fields} compared fields
-        </p>
       </div>
-      <div className="grid border-t border-slate-200/80 bg-white/80 sm:grid-cols-2 xl:grid-cols-4">
+
+      {/* 4 Score Metrics (Single Clean Row) */}
+      <div className="grid border-t border-slate-200/80 bg-white sm:grid-cols-2 xl:grid-cols-4">
         {metricOrder.map((key) => (
           <QualityMetricCard key={key} metric={context.metrics[key]} />
         ))}
       </div>
-      {(context.blockers.length > 0 || context.next_actions.length > 0 || context.strengths.length > 0) && (
-        <div className="grid gap-6 border-t border-slate-200/80 bg-white p-5 sm:p-7 lg:grid-cols-3">
-          <ContextList items={context.blockers.map((item) => `${item.title}: ${item.detail}`)} title="What is blocking quality" tone="text-rose-700" />
-          <ContextList items={context.next_actions} title="Recommended next steps" tone="text-amber-800" />
-          <ContextList items={context.strengths} title="What is already strong" tone="text-emerald-700" />
-        </div>
-      )}
-      <details className="border-t border-slate-200/80 bg-slate-50/70 px-5 py-3 sm:px-7">
-        <summary className="cursor-pointer text-xs font-bold text-brand-700 hover:underline">
-          How these scores are calculated
-        </summary>
-        <div className="mt-2.5 grid gap-2 text-xs text-ink-700 md:grid-cols-2">
-          {metricOrder.map((key) => (
-            <p key={key}>
-              <strong>{context.metrics[key].label}:</strong> {context.metrics[key].explanation}
-            </p>
-          ))}
-        </div>
-      </details>
     </section>
   );
 }
 
 function QualityMetricCard({ metric }) {
+  if (!metric) return null;
+  const barColor =
+    metric.score >= 80 ? "bg-emerald-500" : metric.score >= 60 ? "bg-amber-500" : "bg-rose-500";
+
   return (
     <div className="border-b border-slate-200/80 p-4 last:border-b-0 sm:border-r xl:border-b-0">
       <div className="flex items-baseline justify-between gap-3">
@@ -194,30 +197,8 @@ function QualityMetricCard({ metric }) {
         <p className="text-xl font-black text-ink-950">{metric.score}%</p>
       </div>
       <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-slate-100">
-        <div
-          className={`h-full rounded-full transition-all ${
-            metric.score >= 80 ? "bg-emerald-500" : metric.score >= 60 ? "bg-amber-500" : "bg-rose-500"
-          }`}
-          style={{ width: `${metric.score}%` }}
-        />
+        <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${metric.score}%` }} />
       </div>
-    </div>
-  );
-}
-
-function ContextList({ title, items, empty = "None", tone }) {
-  return (
-    <div>
-      <h3 className={`text-xs font-bold uppercase tracking-wider ${tone}`}>{title}</h3>
-      {items.length ? (
-        <ul className="mt-2 list-disc space-y-1.5 pl-4 text-xs leading-relaxed text-ink-700">
-          {items.map((item) => (
-            <li key={item}>{item}</li>
-          ))}
-        </ul>
-      ) : (
-        <p className="mt-2 text-xs text-slate-400">{empty}</p>
-      )}
     </div>
   );
 }

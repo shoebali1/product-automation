@@ -78,11 +78,14 @@ export default function ProductResearchPage() {
               </div>
               {urls.length > 1 && (
                 <button
-                  className="mt-1 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
+                  className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
                   onClick={() => removeUrl(index)}
+                  title="Remove source"
                   type="button"
                 >
-                  Remove
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
+                  </svg>
                 </button>
               )}
             </div>

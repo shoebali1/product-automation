@@ -378,12 +378,15 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
                     <div className="flex items-center justify-between border-b border-slate-200/70 pb-3">
                       <span className="text-xs font-bold text-slate-700">Variation #{index + 1}</span>
                       <button
-                        className="text-xs font-bold text-rose-600 hover:text-rose-700 transition-colors disabled:opacity-50"
+                        className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors disabled:opacity-50 cursor-pointer"
                         disabled={locked}
                         onClick={() => removeVariation(index)}
+                        title="Delete variation"
                         type="button"
                       >
-                        Remove
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
+                        </svg>
                       </button>
                     </div>
                     <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -472,12 +475,15 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
                     <div className="flex items-center justify-between border-b border-slate-200/70 pb-3">
                       <span className="text-xs font-bold text-slate-700">Pack #{index + 1}</span>
                       <button
-                        className="text-xs font-bold text-rose-600 hover:text-rose-700 transition-colors disabled:opacity-50"
+                        className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors disabled:opacity-50 cursor-pointer"
                         disabled={locked}
                         onClick={() => removePack(index)}
+                        title="Delete pack"
                         type="button"
                       >
-                        Remove
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
+                        </svg>
                       </button>
                     </div>
                     <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
