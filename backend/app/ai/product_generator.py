@@ -1,0 +1,512 @@
+import json
+import logging
+import re
+import unicodedata
+from dataclasses import dataclass
+from decimal import Decimal
+from typing import Any
+
+import httpx
+from pydantic import ValidationError
+
+from app.ai.prompts import PRODUCT_ANALYSIS_PROMPT_VERSION, PRODUCT_GENERATION_SYSTEM_PROMPT
+from app.ai.validator import factual_support_errors
+from app.core.config import settings
+from app.products.comparison import ResearchComparison
+from app.schemas.generated_product import GeneratedProductData
+from app.schemas.product_source import NormalizedProductSource
+
+logger = logging.getLogger(__name__)
+
+
+class ProductGenerationError(RuntimeError):
+    pass
+
+
+AGENTROUTER_GENERATION_TIMEOUT_SECONDS = 120.0
+DEFAULT_GENERATION_TIMEOUT_SECONDS = 45.0
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationUsage:
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationResult:
+    product: GeneratedProductData
+    usage: GenerationUsage
+    model: str
+    prompt_version: str = PRODUCT_ANALYSIS_PROMPT_VERSION
+    input_cost_per_million: Decimal | None = None
+    output_cost_per_million: Decimal | None = None
+
+
+class OpenAIProductGenerator:
+    def __init__(self, *, client: Any | None = None, model: str | None = None) -> None:
+        if client is None:
+            if settings.openai_api_key is None:
+                raise ProductGenerationError("OPENAI_API_KEY is not configured")
+            from openai import OpenAI
+
+            client = OpenAI(
+                api_key=settings.openai_api_key.get_secret_value(),
+                http_client=httpx.Client(timeout=30.0, follow_redirects=True),
+                max_retries=2,
+            )
+        self.client = client
+        self.model = model or settings.openai_model
+
+    def generate(
+        self,
+        sources: list[NormalizedProductSource],
+        comparison: ResearchComparison,
+    ) -> GenerationResult:
+        if not sources:
+            raise ProductGenerationError("At least one normalized source is required")
+        research_json = _research_json(sources, comparison)
+        validation_feedback: list[str] = []
+        total_input_tokens = 0
+        total_output_tokens = 0
+
+        for attempt in range(2):
+            user_content = research_json
+            if validation_feedback:
+                user_content += "\n\nVALIDATION ERRORS FROM THE PREVIOUS ATTEMPT:\n- " + "\n- ".join(
+                    validation_feedback
+                )
+                user_content += "\nCorrect these errors without introducing new facts."
+            try:
+                response = self.client.responses.parse(
+                    model=self.model,
+                    reasoning={"effort": "medium"},
+                    store=False,
+                    input=[
+                        {"role": "system", "content": PRODUCT_GENERATION_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_content},
+                    ],
+                    text_format=GeneratedProductData,
+                )
+                usage = getattr(response, "usage", None)
+                total_input_tokens += int(getattr(usage, "input_tokens", 0) or 0)
+                total_output_tokens += int(getattr(usage, "output_tokens", 0) or 0)
+                parsed = getattr(response, "output_parsed", None)
+                if parsed is None:
+                    raise ProductGenerationError("Model returned no parsed product output")
+                product = (
+                    parsed
+                    if isinstance(parsed, GeneratedProductData)
+                    else GeneratedProductData.model_validate(parsed)
+                )
+                verified_product = _inject_verified_research(product, sources, comparison)
+                validation_feedback = _draft_quality_errors(
+                    verified_product
+                ) + factual_support_errors(
+                    verified_product, sources
+                )
+                if not validation_feedback:
+                    return GenerationResult(
+                        product=verified_product,
+                        usage=GenerationUsage(total_input_tokens, total_output_tokens),
+                        model=self.model,
+                    )
+            except ValidationError as exc:
+                validation_feedback = [str(exc)]
+            except ProductGenerationError as exc:
+                validation_feedback = [str(exc)]
+
+            if attempt == 1:
+                break
+        raise ProductGenerationError(
+            "Generated product failed validation after one repair attempt: "
+            + "; ".join(validation_feedback)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CompatibleModelRoute:
+    provider_name: str
+    model_id: str
+    client: Any
+    supports_json_schema: bool
+    max_tokens: int
+    temperature: float
+    input_cost_per_million: Decimal | None = None
+    output_cost_per_million: Decimal | None = None
+
+
+class CompatibleProductGenerator:
+    """Product generator for OpenAI-compatible Chat Completions providers."""
+
+    def __init__(self, route: CompatibleModelRoute) -> None:
+        self.route = route
+        self.model = f"{route.provider_name}:{route.model_id}"
+
+    def generate(
+        self,
+        sources: list[NormalizedProductSource],
+        comparison: ResearchComparison,
+    ) -> GenerationResult:
+        if not sources:
+            raise ProductGenerationError("At least one normalized source is required")
+        research_json = _research_json(sources, comparison)
+        feedback: list[str] = []
+        input_tokens = 0
+        output_tokens = 0
+        schema = GeneratedProductData.model_json_schema()
+
+        for attempt in range(2):
+            user_content = research_json
+            if not self.route.supports_json_schema:
+                user_content += (
+                    "\n\nREQUIRED OUTPUT JSON SCHEMA (match these fields and types):\n"
+                    + json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
+                )
+            if feedback:
+                user_content += "\n\nVALIDATION ERRORS FROM THE PREVIOUS ATTEMPT:\n- " + "\n- ".join(feedback)
+                user_content += "\nReturn corrected JSON without introducing new facts."
+            response_format = (
+                {"type": "json_schema", "json_schema": {"name": "generated_product", "strict": True, "schema": schema}}
+                if self.route.supports_json_schema else {"type": "json_object"}
+            )
+            response = self.route.client.chat.completions.create(
+                model=self.route.model_id,
+                messages=[
+                    {"role": "system", "content": PRODUCT_GENERATION_SYSTEM_PROMPT + "\nReturn only a JSON object."},
+                    {"role": "user", "content": user_content},
+                ],
+                response_format=response_format,
+                max_tokens=self.route.max_tokens,
+                temperature=self.route.temperature,
+            )
+            usage = getattr(response, "usage", None)
+            input_tokens += int(getattr(usage, "prompt_tokens", 0) or 0)
+            output_tokens += int(getattr(usage, "completion_tokens", 0) or 0)
+            content = response.choices[0].message.content
+            try:
+                product = _parse_generated_product(
+                    content,
+                    fallback_title=_fallback_product_title(sources),
+                )
+            except (json.JSONDecodeError, TypeError, ValidationError) as exc:
+                feedback = [str(exc)]
+            else:
+                verified_product = _inject_verified_research(product, sources, comparison)
+                feedback = _draft_quality_errors(verified_product) + factual_support_errors(
+                    verified_product, sources
+                )
+                if not feedback:
+                    return GenerationResult(
+                        product=verified_product,
+                        usage=GenerationUsage(input_tokens, output_tokens),
+                        model=self.model,
+                        input_cost_per_million=self.route.input_cost_per_million,
+                        output_cost_per_million=self.route.output_cost_per_million,
+                    )
+            if attempt == 1:
+                break
+        raise ProductGenerationError(
+            "Generated product failed validation after one repair attempt: " + "; ".join(feedback)
+        )
+
+
+class DatabaseRoutingProductGenerator:
+    def __init__(self, routes: list[CompatibleModelRoute]) -> None:
+        if not routes:
+            raise ProductGenerationError(
+                "No enabled AI model with a configured API key is available. Configure one in AI Providers."
+            )
+        self.routes = routes
+        self.model = f"{routes[0].provider_name}:{routes[0].model_id}"
+
+    @classmethod
+    def from_session(cls, session) -> "DatabaseRoutingProductGenerator":
+        from app.services.ai_providers import client_for_provider, enabled_ai_models
+
+        routes = [
+            CompatibleModelRoute(
+                provider_name=model.provider.slug,
+                model_id=model.model_id,
+                client=client_for_provider(
+                    model.provider,
+                    timeout_seconds=(
+                        AGENTROUTER_GENERATION_TIMEOUT_SECONDS
+                        if model.provider.slug == "agentrouter"
+                        else DEFAULT_GENERATION_TIMEOUT_SECONDS
+                    ),
+                    # Routing already falls back to the next enabled model. SDK-level
+                    # retries make a slow thinking model look stuck and can duplicate cost.
+                    max_retries=0,
+                ),
+                supports_json_schema=model.supports_json_schema,
+                max_tokens=model.max_tokens,
+                temperature=float(model.temperature),
+                input_cost_per_million=model.input_cost_per_million,
+                output_cost_per_million=model.output_cost_per_million,
+            )
+            for model in enabled_ai_models(session)
+        ]
+        return cls(routes)
+
+    def generate(self, sources, comparison) -> GenerationResult:
+        failures: list[str] = []
+        for position, route in enumerate(self.routes, start=1):
+            route_name = f"{route.provider_name}:{route.model_id}"
+            logger.info(
+                "Starting AI generation route %s (%s/%s)",
+                route_name,
+                position,
+                len(self.routes),
+            )
+            try:
+                result = CompatibleProductGenerator(route).generate(sources, comparison)
+                logger.info("AI generation route %s completed successfully", route_name)
+                return result
+            except Exception as exc:
+                safe_error = _safe_route_error(exc)
+                failures.append(f"{route_name} ({safe_error})")
+                logger.warning("AI generation route %s failed: %s", route_name, safe_error)
+        raise ProductGenerationError("All enabled AI models failed: " + "; ".join(failures))
+
+
+def _clean_json(content: str | None) -> str:
+    if not content:
+        raise ProductGenerationError("Model returned an empty response")
+    clean = content.strip()
+    if clean.startswith("```"):
+        clean = clean.removeprefix("```json").removeprefix("```")
+        clean = clean.removesuffix("```").strip()
+    return clean
+
+
+def _parse_generated_product(
+    content: str | None,
+    *,
+    fallback_title: str = "",
+) -> GeneratedProductData:
+    payload = json.loads(_clean_json(content))
+    if not isinstance(payload, dict):
+        raise TypeError("Model response must be a JSON object")
+
+    # Some OpenAI-compatible providers wrap structured output despite receiving a
+    # response schema. Accept their common wrappers without weakening our schema.
+    for _ in range(3):
+        wrapped = next(
+            (
+                payload[wrapper]
+                for wrapper in ("product", "generated_product", "data")
+                if isinstance(payload.get(wrapper), dict)
+            ),
+            None,
+        )
+        if wrapped is None:
+            break
+        payload = wrapped
+
+    payload = _normalize_model_payload(payload, fallback_title=fallback_title)
+
+    # Confidence is calculated from source agreement in _inject_verified_research;
+    # never trust or require a model's symbolic/numeric confidence assessment.
+    payload["overall_confidence"] = 0
+    return GeneratedProductData.model_validate(payload)
+
+
+def _normalize_model_payload(
+    payload: dict[str, Any],
+    *,
+    fallback_title: str = "",
+) -> dict[str, Any]:
+    normalized = dict(payload)
+    title = normalized.get("product_title") or normalized.get("title") or fallback_title
+    normalized["product_title"] = title
+    normalized.setdefault("business_product_title", title)
+    normalized.setdefault("slug", _slugify(str(title)))
+
+    if not normalized.get("highlights") and isinstance(normalized.get("features"), list):
+        normalized["highlights"] = [
+            {"name": f"Feature {index}", "value": str(value)}
+            for index, value in enumerate(normalized["features"], start=1)
+            if value
+        ]
+
+    if isinstance(normalized.get("specifications"), dict):
+        normalized["specifications"] = {
+            str(key).strip(): str(value).strip()
+            for key, value in normalized["specifications"].items()
+            if str(key).strip() and value is not None and str(value).strip()
+        }
+
+    seo = normalized.get("seo")
+    if isinstance(seo, dict):
+        seo = dict(seo)
+        seo["meta_title"] = seo.get("meta_title") or seo.get("title") or ""
+        seo["meta_keywords"] = seo.get("meta_keywords") or seo.get("keywords") or []
+        seo.setdefault("meta_description", "")
+        seo.setdefault("business_meta_title", seo["meta_title"])
+        seo.setdefault("business_meta_description", seo["meta_description"])
+        seo["canonical_link"] = None
+        seo["business_canonical_link"] = None
+        allowed_seo = GeneratedProductData.model_fields["seo"].annotation.model_fields
+        normalized["seo"] = {key: value for key, value in seo.items() if key in allowed_seo}
+
+    normalized["packs"] = [
+        _normalize_pack(item) for item in normalized.get("packs", []) if isinstance(item, dict)
+    ]
+    normalized["variations"] = [
+        _normalize_variation(item)
+        for item in normalized.get("variations", [])
+        if isinstance(item, dict)
+    ]
+    normalized.setdefault("is_active", True)
+    normalized.setdefault("is_in_stock", True)
+    normalized.setdefault("is_fast_delivery", True)
+    normalized.setdefault("is_cod_available", True)
+    normalized.setdefault("customisation_available", False)
+    normalized.setdefault("is_prescription_required", False)
+    normalized.setdefault("is_returnble", True)
+    normalized.setdefault("is_liquid", False)
+    normalized.setdefault("quantity", 1)
+    normalized.setdefault("step_up_quantity", 1)
+    normalized.setdefault("pieces", 1)
+    normalized.setdefault("in_stock_quantity", 100)
+    normalized.setdefault("sales_count", 0)
+
+    # These records are injected from deterministic comparison after validation.
+    normalized["source_evidence"] = {}
+    normalized["conflicts"] = []
+    allowed = GeneratedProductData.model_fields
+    return {key: value for key, value in normalized.items() if key in allowed}
+
+
+def _normalize_pack(item: dict[str, Any]) -> dict[str, Any]:
+    pack = dict(item)
+    pack["label"] = pack.get("label") or pack.get("pack_size") or pack.get("name") or ""
+    allowed = {"label", "quantity", "price", "mrp", "sku"}
+    return {key: value for key, value in pack.items() if key in allowed}
+
+
+def _normalize_variation(item: dict[str, Any]) -> dict[str, Any]:
+    variation = dict(item)
+    variation["name"] = variation.get("name") or variation.get("variation_name") or ""
+    variation.setdefault("attributes", {})
+    allowed = {"name", "price", "mrp", "sku", "attributes"}
+    return {key: value for key, value in variation.items() if key in allowed}
+
+
+def _slugify(value: str) -> str:
+    ascii_value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_value.casefold()).strip("-")
+    return slug or "generated-product"
+
+
+def _fallback_product_title(sources: list[NormalizedProductSource]) -> str:
+    titles = [source.product_title.strip() for source in sources if source.product_title]
+    return min(titles, key=len) if titles else ""
+
+
+def _draft_quality_errors(product: GeneratedProductData) -> list[str]:
+    errors = []
+    if not product.product_title.strip():
+        errors.append("product_title must not be empty")
+    if not any(
+        (
+            product.short_description.strip(),
+            product.description.strip(),
+            product.highlights,
+            product.specifications,
+        )
+    ):
+        errors.append("draft must contain descriptive product content")
+    return errors
+
+
+def _safe_route_error(error: Exception) -> str:
+    if isinstance(error, (ProductGenerationError, ValidationError, ValueError)):
+        return (str(error) or error.__class__.__name__)[:300]
+    return error.__class__.__name__
+
+
+def _research_json(
+    sources: list[NormalizedProductSource], comparison: ResearchComparison
+) -> str:
+    source_payloads = []
+    for index, source in enumerate(sources, start=1):
+        payload = source.model_dump(mode="json")
+        payload.pop("raw_json_ld", None)
+        source_payloads.append({"source_number": index, "data": payload})
+    payload = {
+        "normalized_sources": source_payloads,
+        "comparison": comparison.model_dump(mode="json"),
+    }
+    return "PRODUCT RESEARCH EVIDENCE\n" + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def _inject_verified_research(
+    product: GeneratedProductData,
+    sources: list[NormalizedProductSource],
+    comparison: ResearchComparison,
+) -> GeneratedProductData:
+    evidence = {
+        field_path: field.model_dump(mode="json")
+        for field_path, field in comparison.evidence.items()
+    }
+    conflicts = [conflict.model_dump(mode="json") for conflict in comparison.conflicts]
+    warnings = list(product.warnings)
+    if len(sources) < 3:
+        warnings.append(
+            f"Only {len(sources)} successful source{'s were' if len(sources) != 1 else ' was'} available."
+        )
+    if conflicts:
+        warnings.append(f"{len(conflicts)} factual conflict{'s' if len(conflicts) != 1 else ''} require review.")
+    confidence_scores = [
+        field.confidence_score
+        for field in comparison.evidence.values()
+        if not field.requires_review
+    ]
+    overall_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0
+    source_quantity_cap = 0.4 if len(sources) == 1 else 0.7 if len(sources) == 2 else 1.0
+    overall_confidence = min(overall_confidence, source_quantity_cap)
+    seo = product.seo.model_copy(
+        update={"canonical_link": None, "business_canonical_link": None}
+    )
+    verified_scalars = {}
+    for field_name in (
+        "product_title",
+        "brand",
+        "manufacturer",
+        "generic_name",
+        "product_code",
+        "sku",
+        "gtin",
+        "category",
+    ):
+        field = comparison.evidence.get(field_name)
+        if field is not None and not (
+            field_name == "product_title" and field.selected_value is None
+        ):
+            verified_scalars[field_name] = field.selected_value
+
+    verified_specifications = {
+        field_path.removeprefix("specifications."): str(field.selected_value)
+        for field_path, field in comparison.evidence.items()
+        if field_path.startswith("specifications.") and field.selected_value is not None
+    }
+    verified_pricing = {
+        field_path.removeprefix("pricing."): field.selected_value
+        for field_path, field in comparison.evidence.items()
+        if field_path.startswith("pricing.")
+    }
+    pricing = product.pricing.model_copy(update=verified_pricing)
+    return product.model_copy(
+        update={
+            **verified_scalars,
+            "specifications": verified_specifications,
+            "pricing": pricing,
+            "seo": seo,
+            "source_evidence": evidence,
+            "conflicts": conflicts,
+            "warnings": sorted(set(warnings)),
+            "overall_confidence": Decimal(str(round(overall_confidence, 4))),
+        }
+    )

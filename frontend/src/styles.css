@@ -1,0 +1,75 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "Segoe UI", system-ui, sans-serif;
+  --color-ink-950: #12221c;
+  --color-ink-700: #3f514a;
+  --color-ink-500: #6f8179;
+  --color-canvas: #f4f7f5;
+  --color-brand-700: #0d6046;
+  --color-brand-600: #147a59;
+  --color-brand-100: #dff3ea;
+  --color-accent-500: #d88c35;
+}
+
+:root {
+  font-family: var(--font-sans);
+  color: #12221c;
+  background: #f4f7f5;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid rgb(20 122 89 / 25%);
+  outline-offset: 2px;
+}
+
+.panel {
+  border: 1px solid #dfe7e2;
+  border-radius: 1rem;
+  background: rgb(255 255 255 / 92%);
+  box-shadow: 0 16px 45px rgb(25 58 45 / 6%);
+}
+
+.field {
+  width: 100%;
+  border: 1px solid #cfdad4;
+  border-radius: 0.75rem;
+  background: white;
+  padding: 0.72rem 0.85rem;
+  color: #12221c;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.field:focus {
+  border-color: #147a59;
+  box-shadow: 0 0 0 3px rgb(20 122 89 / 10%);
+  outline: none;
+}
+
+.label {
+  display: block;
+  margin-bottom: 0.4rem;
+  color: #3f514a;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}

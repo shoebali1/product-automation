@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Fallback Product Title</title>
+    <meta property="og:image" content="/images/widget-main.jpg">
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {"@type": "BreadcrumbList", "name": "Products"},
+          {
+            "@type": ["Thing", "Product"],
+            "name": "Acme Clinical Widget W-100",
+            "description": "A carefully described test product.",
+            "brand": {"@type": "Brand", "name": "Acme"},
+            "manufacturer": {"name": "Acme Medical"},
+            "sku": "W-100-12",
+            "mpn": "W100",
+            "gtin13": "1234567890123",
+            "category": "Clinical Widgets",
+            "image": ["/images/widget-main.jpg", "/images/widget-side.jpg"],
+            "offers": {
+              "@type": "Offer",
+              "price": "1,249.50",
+              "priceCurrency": "INR"
+            },
+            "additionalProperty": [
+              {"@type": "PropertyValue", "name": "Sterility", "value": "Sterile"}
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <main class="product">
+      <h1>DOM title should not replace JSON-LD</h1>
+      <p class="mrp">MRP ₹1,499.00</p>
+      <h2>Product Features</h2>
+      <ul><li>Single-use configuration</li><li>Transparent body</li></ul>
+      <h2>How to Use</h2>
+      <p>Follow the supplied product instructions.</p>
+      <h2>Precautions</h2>
+      <ul><li>Use only when the package is intact.</li></ul>
+      <h2>Specifications</h2>
+      <table>
+        <tr><th>Material</th><td>Medical grade silicone</td></tr>
+        <tr><th>Pack Quantity</th><td>1 unit</td></tr>
+      </table>
+      <label for="size-choice">Size</label>
+      <select id="size-choice" name="size">
+        <option value="">Choose Size</option>
+        <option value="12-fg">12 FG</option>
+        <option value="14-fg">14 FG</option>
+      </select>
+      <label for="pack-choice">Pack Quantity</label>
+      <select id="pack-choice" name="pack">
+        <option value="">Choose Pack Quantity</option>
+        <option value="1">Pack of 1</option>
+        <option value="10">Pack of 10</option>
+      </select>
+      <img src="/images/widget-main.jpg" alt="Acme widget">
+    </main>
+  </body>
+  <footer>
+    <table><tr><th>Support</th><td>Call our store</td></tr></table>
+  </footer>
+</html>
