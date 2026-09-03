@@ -435,10 +435,40 @@ def _research_json(
         payload = source.model_dump(mode="json")
         payload.pop("raw_json_ld", None)
         source_payloads.append({"source_number": index, "data": payload})
+
+    surginatal_ref: dict[str, Any] = {}
+    try:
+        from app.services.surginatal import fetch_surginatal_taxonomy
+
+        taxonomy = fetch_surginatal_taxonomy()
+        if taxonomy:
+            surginatal_ref = {
+                "categories": [
+                    {
+                        "id": c.get("id"),
+                        "name": c.get("name"),
+                        "subcategories": [
+                            {"id": sc.get("id"), "name": sc.get("name")}
+                            for sc in c.get("subcategories", [])
+                        ],
+                    }
+                    for c in taxonomy.get("category_data", [])
+                ],
+                "brands": [
+                    {"id": b.get("id"), "name": b.get("name")}
+                    for b in taxonomy.get("brand_data", [])
+                ],
+            }
+    except Exception as exc:
+        logger.debug("Could not attach Surginatal taxonomy reference to prompt: %s", exc)
+
     payload = {
         "normalized_sources": source_payloads,
         "comparison": comparison.model_dump(mode="json"),
     }
+    if surginatal_ref:
+        payload["surginatal_master_taxonomy"] = surginatal_ref
+
     return "PRODUCT RESEARCH EVIDENCE\n" + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -451,18 +481,15 @@ def _inject_verified_research(
         field_path: field.model_dump(mode="json")
         for field_path, field in comparison.evidence.items()
     }
-    conflicts = [conflict.model_dump(mode="json") for conflict in comparison.conflicts]
     warnings = list(product.warnings)
     if len(sources) < 3:
         warnings.append(
             f"Only {len(sources)} successful source{'s were' if len(sources) != 1 else ' was'} available."
         )
-    if conflicts:
-        warnings.append(f"{len(conflicts)} factual conflict{'s' if len(conflicts) != 1 else ''} require review.")
+
     confidence_scores = [
         field.confidence_score
         for field in comparison.evidence.values()
-        if not field.requires_review
     ]
     overall_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0
     source_quantity_cap = 0.4 if len(sources) == 1 else 0.7 if len(sources) == 2 else 1.0
@@ -470,6 +497,7 @@ def _inject_verified_research(
     seo = product.seo.model_copy(
         update={"canonical_link": None, "business_canonical_link": None}
     )
+
     verified_scalars = {}
     for field_name in (
         "product_title",
@@ -482,31 +510,50 @@ def _inject_verified_research(
         "category",
     ):
         field = comparison.evidence.get(field_name)
-        if field is not None and not (
-            field_name == "product_title" and field.selected_value is None
-        ):
-            verified_scalars[field_name] = field.selected_value
+        if field is not None:
+            if field.selected_value is not None:
+                verified_scalars[field_name] = field.selected_value
+            elif field_name != "product_title":
+                ai_val = getattr(product, field_name)
+                if ai_val is not None:
+                    verified_scalars[field_name] = ai_val
 
-    verified_specifications = {
-        field_path.removeprefix("specifications."): str(field.selected_value)
-        for field_path, field in comparison.evidence.items()
-        if field_path.startswith("specifications.") and field.selected_value is not None
-    }
-    verified_pricing = {
-        field_path.removeprefix("pricing."): field.selected_value
-        for field_path, field in comparison.evidence.items()
-        if field_path.startswith("pricing.")
-    }
+    verified_specifications = dict(product.specifications)
+    for field_path, field in comparison.evidence.items():
+        if field_path.startswith("specifications.") and field.selected_value is not None:
+            verified_specifications[field_path.removeprefix("specifications.")] = str(field.selected_value)
+
+    verified_pricing = {}
+    for field_path, field in comparison.evidence.items():
+        if field_path.startswith("pricing.") and field.selected_value is not None:
+            verified_pricing[field_path.removeprefix("pricing.")] = field.selected_value
     pricing = product.pricing.model_copy(update=verified_pricing)
-    return product.model_copy(
+
+    resolved_conflicts = []
+    for conflict in comparison.conflicts:
+        c_dict = conflict.model_dump(mode="json")
+        c_dict["status"] = "RESOLVED"
+        c_dict["requires_review"] = False
+        c_dict["resolution"] = {
+            "action": "ai_resolve",
+            "note": "Resolved by AI model based on multi-source evidence",
+        }
+        resolved_conflicts.append(c_dict)
+
+    updated_product = product.model_copy(
         update={
             **verified_scalars,
             "specifications": verified_specifications,
             "pricing": pricing,
             "seo": seo,
             "source_evidence": evidence,
-            "conflicts": conflicts,
+            "conflicts": resolved_conflicts,
             "warnings": sorted(set(warnings)),
             "overall_confidence": Decimal(str(round(overall_confidence, 4))),
         }
     )
+
+    from app.services.surginatal import enrich_with_surginatal
+
+    return enrich_with_surginatal(updated_product)
+

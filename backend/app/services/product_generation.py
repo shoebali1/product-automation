@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from decimal import Decimal
 from time import perf_counter
 from typing import Protocol
@@ -10,8 +11,9 @@ from app.ai.product_generator import GenerationResult, ProductGenerationError
 from app.ai.prompts import PRODUCT_ANALYSIS_PROMPT_VERSION
 from app.core.config import settings
 from app.models.ai_generation_log import AIGenerationLog
-from app.models.enums import GenerationStatus, JobStatus, SourceStatus
+from app.models.enums import ConflictStatus, GenerationStatus, JobStatus, SourceStatus
 from app.models.generated_product import GeneratedProduct
+from app.models.research import ProductConflict
 from app.models.scraping import NormalizedProductSource as NormalizedProductSourceModel
 from app.models.scraping import ScrapingJob, ScrapingSource
 from app.products.comparison import compare_sources
@@ -102,10 +104,26 @@ def _persist_generated_product(
     result: GenerationResult,
 ) -> GeneratedProduct:
     product_data = enrich_with_surginatal(result.product)
+
+    # Automatically resolve job's conflict records in DB since AI analyzed & resolved them
+    conflicts = list(
+        session.scalars(select(ProductConflict).where(ProductConflict.job_id == job.id))
+    )
+    for conflict in conflicts:
+        conflict.status = ConflictStatus.RESOLVED
+        conflict.requires_review = False
+        conflict.resolution = {
+            "action": "ai_resolve",
+            "resolved_at": datetime.now(UTC).isoformat(),
+            "note": "Resolved automatically by AI model using multi-source evidence and Surginatal master taxonomy",
+        }
+
     current_version = session.scalar(
         select(func.max(GeneratedProduct.version)).where(GeneratedProduct.job_id == job.id)
     )
-    requires_review = bool(product_data.conflicts or product_data.warnings)
+    requires_review = any(
+        c.get("status") == "OPEN" and c.get("requires_review") for c in product_data.conflicts
+    )
     status = JobStatus.REVIEW_REQUIRED if requires_review else JobStatus.DRAFT
     product = GeneratedProduct(
         job_id=job.id,

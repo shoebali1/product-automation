@@ -72,10 +72,10 @@ def test_persists_generated_draft_and_ai_audit_log() -> None:
         product = generate_product_draft(session, job.id, FakeGenerator())
         log = session.scalar(select(AIGenerationLog))
 
-        assert product.status == JobStatus.REVIEW_REQUIRED
+        assert product.status == JobStatus.DRAFT
         assert product.version == 1
         assert product.highlights[0].name == "Brand"
-        assert job.status == JobStatus.REVIEW_REQUIRED
+        assert job.status == JobStatus.DRAFT
         assert log is not None
         assert log.status == GenerationStatus.COMPLETED
         assert log.product_id == product.id

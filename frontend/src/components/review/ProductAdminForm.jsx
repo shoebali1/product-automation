@@ -624,86 +624,74 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
           <div>
             <div className="flex items-center justify-between">
               <label className="block text-xs font-bold text-slate-700">Category *</label>
-              {draft.category_id && (
-                <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-extrabold text-emerald-800">
-                  ID: {draft.category_id} (Surginatal)
-                </span>
-              )}
+              <div className="flex items-center gap-1.5 text-xs">
+                <span className="text-[11px] font-bold text-slate-500">Surginatal ID:</span>
+                <input
+                  className="w-16 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-center font-mono text-xs font-bold text-emerald-800 focus:border-brand-600 focus:bg-white focus:outline-none"
+                  disabled={locked}
+                  onChange={(e) => setField("category_id", e.target.value ? Number(e.target.value) : null)}
+                  placeholder="None"
+                  title="Surginatal Category ID"
+                  type="number"
+                  value={draft.category_id ?? ""}
+                />
+              </div>
             </div>
-            <div className="mt-1 flex gap-2">
-              <input
-                className="field flex-1"
-                disabled={locked}
-                onChange={(e) => setField("category", e.target.value)}
-                placeholder="Select category"
-                value={draft.category || ""}
-              />
-              <input
-                className="field w-24 font-mono text-xs"
-                disabled={locked}
-                onChange={(e) => setField("category_id", e.target.value ? Number(e.target.value) : null)}
-                placeholder="Cat ID"
-                title="Surginatal Category ID"
-                type="number"
-                value={draft.category_id ?? ""}
-              />
-            </div>
+            <input
+              className="field mt-1"
+              disabled={locked}
+              onChange={(e) => setField("category", e.target.value)}
+              placeholder="Select category"
+              value={draft.category || ""}
+            />
           </div>
           <div>
             <div className="flex items-center justify-between">
               <label className="block text-xs font-bold text-slate-700">Sub-category *</label>
-              {draft.subcategory_id && (
-                <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-extrabold text-emerald-800">
-                  ID: {draft.subcategory_id} (Surginatal)
-                </span>
-              )}
+              <div className="flex items-center gap-1.5 text-xs">
+                <span className="text-[11px] font-bold text-slate-500">Surginatal ID:</span>
+                <input
+                  className="w-16 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-center font-mono text-xs font-bold text-emerald-800 focus:border-brand-600 focus:bg-white focus:outline-none"
+                  disabled={locked}
+                  onChange={(e) => setField("subcategory_id", e.target.value ? Number(e.target.value) : null)}
+                  placeholder="None"
+                  title="Surginatal Sub-category ID"
+                  type="number"
+                  value={draft.subcategory_id ?? ""}
+                />
+              </div>
             </div>
-            <div className="mt-1 flex gap-2">
-              <input
-                className="field flex-1"
-                disabled={locked}
-                onChange={(e) => setField("subcategory", e.target.value)}
-                placeholder="Select sub-category"
-                value={draft.subcategory || ""}
-              />
-              <input
-                className="field w-24 font-mono text-xs"
-                disabled={locked}
-                onChange={(e) => setField("subcategory_id", e.target.value ? Number(e.target.value) : null)}
-                placeholder="Sub ID"
-                title="Surginatal Sub-category ID"
-                type="number"
-                value={draft.subcategory_id ?? ""}
-              />
-            </div>
+            <input
+              className="field mt-1"
+              disabled={locked}
+              onChange={(e) => setField("subcategory", e.target.value)}
+              placeholder="Select sub-category"
+              value={draft.subcategory || ""}
+            />
           </div>
           <div>
             <div className="flex items-center justify-between">
               <label className="block text-xs font-bold text-slate-700">Brand *</label>
-              {draft.brand_id && (
-                <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-extrabold text-emerald-800">
-                  ID: {draft.brand_id} (Surginatal)
-                </span>
-              )}
+              <div className="flex items-center gap-1.5 text-xs">
+                <span className="text-[11px] font-bold text-slate-500">Surginatal ID:</span>
+                <input
+                  className="w-16 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-center font-mono text-xs font-bold text-emerald-800 focus:border-brand-600 focus:bg-white focus:outline-none"
+                  disabled={locked}
+                  onChange={(e) => setField("brand_id", e.target.value ? Number(e.target.value) : null)}
+                  placeholder="None"
+                  title="Surginatal Brand ID"
+                  type="number"
+                  value={draft.brand_id ?? ""}
+                />
+              </div>
             </div>
-            <div className="mt-1 flex gap-2">
-              <input
-                className="field flex-1 font-bold text-brand-800"
-                disabled={locked}
-                onChange={(e) => setField("brand", e.target.value)}
-                placeholder="Select brand"
-                value={draft.brand || ""}
-              />
-              <input
-                className="field w-24 font-mono text-xs"
-                disabled={locked}
-                onChange={(e) => setField("brand_id", e.target.value ? Number(e.target.value) : null)}
-                placeholder="Brand ID"
-                title="Surginatal Brand ID"
-                type="number"
-                value={draft.brand_id ?? ""}
-              />
-            </div>
+            <input
+              className="field mt-1 font-bold text-brand-800"
+              disabled={locked}
+              onChange={(e) => setField("brand", e.target.value)}
+              placeholder="Select brand"
+              value={draft.brand || ""}
+            />
           </div>
         </div>
 

@@ -93,3 +93,53 @@ def test_fails_after_one_unsuccessful_repair() -> None:
     client = FakeClient([unsupported, unsupported])
     with pytest.raises(ProductGenerationError, match="repair attempt"):
         OpenAIProductGenerator(client=client).generate([item], comparison)
+
+
+def test_resolves_conflicting_data_with_ai_selection() -> None:
+    source_1 = NormalizedProductSource(
+        source_url="https://site1.com/p",
+        domain="site1.com",
+        product_title="Romsons Urine Bag",
+        brand="Romsons Scientific",
+        category="Catheters",
+        description="Standard urine bag.",
+        specifications={"Capacity": "2000 ml"},
+        extraction_method="test",
+        scraped_at=datetime.now(UTC),
+    )
+    source_2 = NormalizedProductSource(
+        source_url="https://site2.com/p",
+        domain="site2.com",
+        product_title="Romsons Uro Bag",
+        brand="Romsons",
+        category="Urology",
+        description="Standard urine bag.",
+        specifications={"Capacity": "2 Litre"},
+        extraction_method="test",
+        scraped_at=datetime.now(UTC),
+    )
+    comparison = compare_sources([("s1", source_1), ("s2", source_2)])
+    # Verify there is a conflict in the raw comparison
+    assert len(comparison.conflicts) > 0
+
+    ai_draft = GeneratedProductData(
+        product_title="Romsons 2L Uro Urine Bag",
+        slug="romsons-2l-uro-urine-bag",
+        business_product_title="Romsons 2L Uro Urine Bag",
+        brand="Romsons",
+        category="Catheters & Drainage",
+        subcategory="Urine Collection Bags & Urometers",
+        description="Standard urine bag.",
+        specifications={"Capacity": "2 Litre"},
+        overall_confidence=Decimal("0.8"),
+    )
+    client = FakeClient([ai_draft])
+    result = OpenAIProductGenerator(client=client).generate([source_1, source_2], comparison)
+
+    # Verify AI choice is preserved and enriched with Surginatal ID
+    assert result.product.brand == "Romsons"
+    assert result.product.brand_id == 49
+    assert result.product.specifications["Capacity"] == "2 Litre"
+    # Conflicts in product data are marked RESOLVED, not OPEN
+    assert all(c["status"] == "RESOLVED" for c in result.product.conflicts)
+    assert all(not c["requires_review"] for c in result.product.conflicts)
