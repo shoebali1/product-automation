@@ -16,8 +16,15 @@ FEATURE_HEADINGS = {"features", "key features", "highlights", "product features"
 BENEFIT_HEADINGS = {"benefits", "product benefits"}
 USAGE_HEADINGS = {"how to use", "directions", "usage", "instructions for use"}
 PRECAUTION_HEADINGS = {"precautions", "warnings", "safety information"}
-VARIATION_GROUPS = {"size", "colour", "color", "model", "capacity", "configuration"}
-PACK_PATTERN = re.compile(r"(?:pack\s+of\s+|pack\s*[-x]?\s*|)(\d+)\s*(?:pack|pcs?|pieces?|units?)?", re.I)
+VARIATION_GROUPS = {
+    "size", "colour", "color", "model", "capacity", "configuration", "style",
+    "type", "length", "width", "diameter", "flavour", "flavor", "strength",
+}
+PACK_GROUPS = {"pack", "quantity", "qty", "count", "box", "set", "unit"}
+PACK_PATTERN = re.compile(
+    r"(?:\b(?:pack|box|set)\s*(?:of|x|-)?\s*(\d+)\b|\b(\d+)\s*(?:packs?|pcs?|pieces?|units?|count|ct)\b)",
+    re.I,
+)
 
 
 class ProductExtractor:
@@ -259,23 +266,58 @@ def _extract_choices(
         if not name:
             continue
         offer = _choose_offer(variant.get("offers"))
-        variation = ProductVariation(
-            name=name,
-            sku=_clean(variant.get("sku")),
-            price=parse_price(offer.get("price") or offer.get("lowPrice")),
-            mrp=parse_price(offer.get("highPrice")),
-            attributes=attributes,
-        )
-        key = (variation.name.casefold(), tuple(sorted(variation.attributes.items())))
-        if key not in seen_variations:
-            seen_variations.add(key)
-            variations.append(variation)
+        if _looks_like_pack(name):
+            _append_pack(
+                packs,
+                seen_packs,
+                label=name,
+                quantity=_pack_quantity(name),
+                price=parse_price(offer.get("price") or offer.get("lowPrice")),
+                mrp=parse_price(offer.get("highPrice")),
+                sku=_clean(variant.get("sku")),
+            )
+        else:
+            _append_variation(
+                variations,
+                seen_variations,
+                name=name,
+                attributes=attributes,
+                price=parse_price(offer.get("price") or offer.get("lowPrice")),
+                mrp=parse_price(offer.get("highPrice")),
+                sku=_clean(variant.get("sku")),
+            )
+
+    raw_offers = product.get("offers") or []
+    if isinstance(raw_offers, dict):
+        raw_offers = [raw_offers]
+    for offer in raw_offers if isinstance(raw_offers, list) else []:
+        if not isinstance(offer, dict):
+            continue
+        label = _clean(offer.get("name") or offer.get("description"))
+        if not label:
+            continue
+        price = parse_price(offer.get("price") or offer.get("lowPrice"))
+        mrp = parse_price(offer.get("highPrice"))
+        sku = _clean(offer.get("sku"))
+        if _looks_like_pack(label):
+            _append_pack(packs, seen_packs, label=label, quantity=_pack_quantity(label), price=price, mrp=mrp, sku=sku)
+        elif _looks_like_variation(label):
+            _append_variation(variations, seen_variations, name=label, attributes={}, price=price, mrp=mrp, sku=sku)
+
+    for prop in product.get("additionalProperty", []) or []:
+        if not isinstance(prop, dict):
+            continue
+        prop_name = _clean(prop.get("name")) or ""
+        prop_value = _clean(prop.get("value"))
+        if prop_value and _is_pack_group(prop_name):
+            label = prop_value if _looks_like_pack(prop_value) else f"{prop_name}: {prop_value}"
+            _append_pack(packs, seen_packs, label=label, quantity=_pack_quantity(label))
 
     for select in soup.select("select"):
         group_name = _choice_group_name(select, soup)
         group_key = group_name.casefold()
-        is_pack = "pack" in group_key or "quantity" in group_key or "qty" in group_key
-        is_variation = any(token in group_key for token in VARIATION_GROUPS)
+        is_pack = _is_pack_group(group_key)
+        is_variation = _is_variation_group(group_key)
         if not is_pack and not is_variation:
             continue
         for option in select.select("option"):
@@ -286,18 +328,193 @@ def _extract_choices(
             if label.casefold() in {"select", f"select {group_key}", f"choose {group_key}"}:
                 continue
             if is_pack:
-                quantity = _pack_quantity(label)
-                key = (label.casefold(), quantity)
-                if key not in seen_packs:
-                    seen_packs.add(key)
-                    packs.append(ProductPack(label=label, quantity=quantity))
+                _append_pack(
+                    packs,
+                    seen_packs,
+                    label=label,
+                    quantity=_pack_quantity(label),
+                    price=_data_price(option, "data-price", "data-sale-price"),
+                    mrp=_data_price(option, "data-mrp", "data-list-price"),
+                    sku=_clean(option.get("data-sku")),
+                )
             else:
                 attributes = {group_name: label}
-                key = (label.casefold(), tuple(attributes.items()))
-                if key not in seen_variations:
-                    seen_variations.add(key)
-                    variations.append(ProductVariation(name=label, attributes=attributes))
+                _append_variation(
+                    variations,
+                    seen_variations,
+                    name=label,
+                    attributes=attributes,
+                    price=_data_price(option, "data-price", "data-sale-price"),
+                    mrp=_data_price(option, "data-mrp", "data-list-price"),
+                    sku=_clean(option.get("data-sku")),
+                )
+
+    for choice, group_name in _radio_choices(soup):
+        label = _choice_label(choice, soup)
+        if not label:
+            continue
+        if _is_pack_group(group_name):
+            _append_pack(
+                packs,
+                seen_packs,
+                label=label,
+                quantity=_pack_quantity(label),
+                price=_data_price(choice, "data-price", "data-sale-price"),
+                mrp=_data_price(choice, "data-mrp", "data-list-price"),
+                sku=_clean(choice.get("data-sku")),
+            )
+        elif _is_variation_group(group_name):
+            _append_variation(
+                variations,
+                seen_variations,
+                name=label,
+                attributes={group_name: label},
+                price=_data_price(choice, "data-price", "data-sale-price"),
+                mrp=_data_price(choice, "data-mrp", "data-list-price"),
+                sku=_clean(choice.get("data-sku")),
+            )
+
+    for container, group_name in _button_choice_groups(soup):
+        is_pack = _is_pack_group(group_name)
+        for choice in container.select("button, [role='option']"):
+            label = _clean(choice.get("data-value")) or _clean(choice.get("data-option-value")) or _clean(choice.get_text(" "))
+            if not label or choice.has_attr("disabled") or choice.get("aria-disabled") == "true":
+                continue
+            if is_pack:
+                _append_pack(
+                    packs,
+                    seen_packs,
+                    label=label,
+                    quantity=_pack_quantity(label),
+                    price=_data_price(choice, "data-price", "data-sale-price"),
+                    mrp=_data_price(choice, "data-mrp", "data-list-price"),
+                    sku=_clean(choice.get("data-sku")),
+                )
+            else:
+                _append_variation(
+                    variations,
+                    seen_variations,
+                    name=label,
+                    attributes={group_name: label},
+                    price=_data_price(choice, "data-price", "data-sale-price"),
+                    mrp=_data_price(choice, "data-mrp", "data-list-price"),
+                    sku=_clean(choice.get("data-sku")),
+                )
     return variations, packs
+
+
+def _append_variation(
+    variations: list[ProductVariation],
+    seen: set[tuple[str, tuple[tuple[str, str], ...]]],
+    *,
+    name: str,
+    attributes: dict[str, str],
+    price: Decimal | None = None,
+    mrp: Decimal | None = None,
+    sku: str | None = None,
+) -> None:
+    variation = ProductVariation(name=name, sku=sku, price=price, mrp=mrp, attributes=attributes)
+    key = (variation.name.casefold(), tuple(sorted((key.casefold(), value.casefold()) for key, value in attributes.items())))
+    if key not in seen:
+        seen.add(key)
+        variations.append(variation)
+
+
+def _append_pack(
+    packs: list[ProductPack],
+    seen: set[tuple[str, int | None]],
+    *,
+    label: str,
+    quantity: int | None,
+    price: Decimal | None = None,
+    mrp: Decimal | None = None,
+    sku: str | None = None,
+) -> None:
+    key = (label.casefold(), quantity)
+    if key not in seen:
+        seen.add(key)
+        packs.append(ProductPack(label=label, quantity=quantity, price=price, mrp=mrp, sku=sku))
+
+
+def _is_pack_group(value: str) -> bool:
+    normalized = value.casefold()
+    return any(re.search(rf"\b{re.escape(token)}\b", normalized) for token in PACK_GROUPS)
+
+
+def _is_variation_group(value: str) -> bool:
+    normalized = value.casefold()
+    return any(re.search(rf"\b{re.escape(token)}\b", normalized) for token in VARIATION_GROUPS)
+
+
+def _looks_like_pack(value: str) -> bool:
+    return _pack_quantity(value) is not None or _is_pack_group(value)
+
+
+def _looks_like_variation(value: str) -> bool:
+    return _is_variation_group(value)
+
+
+def _data_price(element: Tag, *attributes: str) -> Decimal | None:
+    return next((price for name in attributes if (price := parse_price(element.get(name))) is not None), None)
+
+
+def _choice_label(choice: Tag, soup: Tag | BeautifulSoup) -> str | None:
+    choice_id = _clean(choice.get("id"))
+    if choice_id:
+        label = soup.select_one(f'label[for="{choice_id}"]')
+        if label and (text := _clean(label.get_text(" "))):
+            return text
+    parent_label = choice.find_parent("label")
+    return (_clean(parent_label.get_text(" ")) if parent_label else None) or _clean(choice.get("value"))
+
+
+def _radio_choices(soup: Tag | BeautifulSoup) -> list[tuple[Tag, str]]:
+    choices: list[tuple[Tag, str]] = []
+    for choice in soup.select("input[type='radio']"):
+        fieldset = choice.find_parent("fieldset")
+        legend = fieldset.find("legend") if fieldset else None
+        group_name = (
+            (_clean(legend.get_text(" ")) if legend else None)
+            or _clean(choice.get("aria-label"))
+            or _clean(choice.get("name"))
+            or "Option"
+        )
+        choices.append((choice, group_name.rstrip(":")))
+    return choices
+
+
+def _button_choice_groups(soup: Tag | BeautifulSoup) -> list[tuple[Tag, str]]:
+    groups: list[tuple[Tag, str]] = []
+    seen: set[int] = set()
+    for container in soup.find_all(["fieldset", "div", "ul"]):
+        identity = " ".join(
+            filter(
+                None,
+                (
+                    _clean(container.get("id")),
+                    _clean(" ".join(container.get("class", []))),
+                    _clean(container.get("aria-label")),
+                    _clean(container.get("data-option-name")),
+                ),
+            )
+        )
+        if not (_is_pack_group(identity) or _is_variation_group(identity)):
+            continue
+        if not container.select("button, [role='option']"):
+            continue
+        marker = id(container)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        heading = container.find(["legend", "label", "h2", "h3", "h4"])
+        group_name = (
+            _clean(container.get("data-option-name"))
+            or _clean(container.get("aria-label"))
+            or (_clean(heading.get_text(" ")) if heading else None)
+            or identity
+        )
+        groups.append((container, group_name.rstrip(":")))
+    return groups
 
 
 def _choice_group_name(select: Tag, soup: Tag | BeautifulSoup) -> str:
@@ -313,7 +530,7 @@ def _pack_quantity(label: str) -> int | None:
     match = PACK_PATTERN.search(label)
     if not match:
         return None
-    quantity = int(match.group(1))
+    quantity = int(match.group(1) or match.group(2))
     return quantity if quantity > 0 else None
 
 

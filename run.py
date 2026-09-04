@@ -24,7 +24,11 @@ FRONTEND = ROOT / "frontend"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the Product Automation project")
-    parser.add_argument("--host", default="127.0.0.1", help="host used by the API and frontend")
+    parser.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="host used by the API and frontend (default: 0.0.0.0 for LAN access)",
+    )
     parser.add_argument("--api-port", type=int, default=8010, help="FastAPI port (default: 8010)")
     parser.add_argument("--frontend-port", type=int, default=5173, help="Vite port (default: 5173)")
     parser.add_argument("--no-worker", action="store_true", help="do not start the Celery worker")

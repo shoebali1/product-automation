@@ -6,6 +6,7 @@ from app.services.surginatal import (
     match_brand,
     match_category_and_subcategory,
 )
+from app.api.v1.generated_products import get_catalog_taxonomy
 
 SAMPLE_TAXONOMY = {
     "category_data": [
@@ -112,3 +113,23 @@ def test_enrich_with_surginatal() -> None:
     assert enriched.category_id == 52
     assert enriched.subcategory == "Urine Collection Bags & Urometers"
     assert enriched.subcategory_id == 234
+
+
+def test_catalog_taxonomy_options_are_filtered_for_dropdowns(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.api.v1.generated_products.fetch_surginatal_taxonomy",
+        lambda: SAMPLE_TAXONOMY,
+    )
+
+    result = get_catalog_taxonomy()
+
+    assert [(item.id, item.name) for item in result.brands] == [
+        (1, "3M"),
+        (49, "Romsons"),
+        (105, "B. Braun"),
+    ]
+    assert result.categories[1].name == "Catheters & Drainage"
+    assert [(item.id, item.name) for item in result.categories[1].subcategories] == [
+        (231, "Foley Catheters"),
+        (234, "Urine Collection Bags & Urometers"),
+    ]

@@ -59,6 +59,18 @@ def factual_support_errors(
     for source in sources:
         for name, value in source.specifications.items():
             supported_specs[_text(name).casefold()].add(_text(value).casefold())
+        # Structured identifiers are evidence too. Scrapers commonly extract these
+        # from JSON-LD instead of a visible specification table.
+        for names, value in (
+            (("model", "model number"), source.model),
+            (("product code", "model code"), source.product_code),
+            (("sku",), source.sku),
+            (("gtin",), source.gtin),
+            (("mpn", "manufacturer part number"), source.mpn),
+        ):
+            if value is not None and _text(value):
+                for name in names:
+                    supported_specs[name].add(_text(value).casefold())
     for name, value in product.specifications.items():
         values = supported_specs.get(_text(name).casefold(), set())
         if _text(value).casefold() not in values:

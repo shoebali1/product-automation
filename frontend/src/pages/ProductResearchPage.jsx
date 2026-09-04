@@ -29,6 +29,11 @@ export default function ProductResearchPage() {
     onError: (error) => notify(error.userMessage, "error"),
   });
 
+  const submitResearch = () => {
+    if (!cleanedUrls.length || invalidCount > 0 || createJob.isPending) return;
+    createJob.mutate();
+  };
+
   const updateUrl = (index, value) => setUrls((items) => items.map((item, itemIndex) => (itemIndex === index ? value : item)));
   const removeUrl = (index) => setUrls((items) => items.filter((_, itemIndex) => itemIndex !== index));
 
@@ -105,12 +110,21 @@ export default function ProductResearchPage() {
           <button
             className="rounded-xl bg-gradient-to-r from-brand-600 to-brand-700 px-6 py-3 text-xs font-black text-white shadow-xs hover:from-brand-700 hover:to-brand-800 disabled:cursor-not-allowed disabled:opacity-50 transition-all cursor-pointer"
             disabled={!cleanedUrls.length || invalidCount > 0 || createJob.isPending}
-            onClick={() => createJob.mutate()}
+            onClick={submitResearch}
             type="button"
           >
-            {createJob.isPending ? "Creating research job…" : "Analyze product"}
+            {createJob.isPending ? "Starting analysis…" : "Analyze product"}
           </button>
         </div>
+        {createJob.isPending && (
+          <div
+            aria-live="polite"
+            className="flex items-center gap-3 border-t border-brand-100 bg-brand-50 px-6 py-4 text-xs font-semibold text-brand-900"
+          >
+            <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-brand-600 border-t-transparent" />
+            Creating the research job. The progress page will open automatically…
+          </div>
+        )}
       </section>
     </div>
   );

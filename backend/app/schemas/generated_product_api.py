@@ -85,6 +85,26 @@ class GeneratedProductDetail(StrictSchema):
     quality_context: ProductQualityContext
 
 
+class SurginatalSubmissionResult(StrictSchema):
+    message: str
+    product_id: int
+    product: GeneratedProductDetail
+
+
+class TaxonomyOption(StrictSchema):
+    id: int
+    name: str
+
+
+class CategoryTaxonomyOption(TaxonomyOption):
+    subcategories: list[TaxonomyOption] = Field(default_factory=list)
+
+
+class CatalogTaxonomy(StrictSchema):
+    categories: list[CategoryTaxonomyOption] = Field(default_factory=list)
+    brands: list[TaxonomyOption] = Field(default_factory=list)
+
+
 class UpdateGeneratedProductRequest(StrictSchema):
     version: int = Field(ge=1)
     product_data: GeneratedProductData

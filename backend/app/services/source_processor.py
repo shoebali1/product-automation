@@ -17,6 +17,8 @@ from app.schemas.product_source import NormalizedProductSource
 from app.scraping.errors import ScrapingError
 from app.scraping.orchestrator import ProductScrapingOrchestrator, ScrapeOutcome
 
+NORMALIZED_SOURCE_SCHEMA_VERSION = "1.1-rich-options"
+
 
 @dataclass(frozen=True, slots=True)
 class SourceProcessingResult:
@@ -109,6 +111,7 @@ class SourceProcessor:
                 ScrapingSource.id != source.id,
                 ScrapingSource.status == SourceStatus.COMPLETED,
                 NormalizedProductSourceModel.created_at >= cutoff,
+                NormalizedProductSourceModel.schema_version == NORMALIZED_SOURCE_SCHEMA_VERSION,
             )
             .order_by(NormalizedProductSourceModel.created_at.desc())
             .limit(1)
@@ -147,7 +150,10 @@ class SourceProcessor:
             raw_json_ld=raw_json_ld,
             content_hash=content_hash,
         )
-        source.normalized_product = NormalizedProductSourceModel(product_data=payload)
+        source.normalized_product = NormalizedProductSourceModel(
+            schema_version=NORMALIZED_SOURCE_SCHEMA_VERSION,
+            product_data=payload,
+        )
         source.status = SourceStatus.COMPLETED
         source.http_status = outcome.fetch.status_code if outcome else 200
         source.extraction_method = normalized.extraction_method

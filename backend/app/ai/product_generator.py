@@ -4,6 +4,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from decimal import Decimal
+from html.parser import HTMLParser
 from typing import Any
 
 import httpx
@@ -13,7 +14,8 @@ from app.ai.prompts import PRODUCT_ANALYSIS_PROMPT_VERSION, PRODUCT_GENERATION_S
 from app.ai.validator import factual_support_errors
 from app.core.config import settings
 from app.products.comparison import ResearchComparison
-from app.schemas.generated_product import GeneratedProductData
+from app.schemas.common import ProductImage, ProductPack, ProductVariation
+from app.schemas.generated_product import GeneratedProductData, Highlight
 from app.schemas.product_source import NormalizedProductSource
 
 logger = logging.getLogger(__name__)
@@ -25,6 +27,7 @@ class ProductGenerationError(RuntimeError):
 
 AGENTROUTER_GENERATION_TIMEOUT_SECONDS = 120.0
 DEFAULT_GENERATION_TIMEOUT_SECONDS = 45.0
+MAX_GENERATION_ATTEMPTS = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,16 +70,22 @@ class OpenAIProductGenerator:
             raise ProductGenerationError("At least one normalized source is required")
         research_json = _research_json(sources, comparison)
         validation_feedback: list[str] = []
+        previous_draft: str | None = None
         total_input_tokens = 0
         total_output_tokens = 0
 
-        for attempt in range(2):
+        for attempt in range(MAX_GENERATION_ATTEMPTS):
             user_content = research_json
             if validation_feedback:
                 user_content += "\n\nVALIDATION ERRORS FROM THE PREVIOUS ATTEMPT:\n- " + "\n- ".join(
                     validation_feedback
                 )
-                user_content += "\nCorrect these errors without introducing new facts."
+                if previous_draft:
+                    user_content += "\n\nPREVIOUS DRAFT TO REPAIR:\n" + previous_draft
+                user_content += (
+                    "\nCorrect every listed error in the previous draft without introducing new facts. "
+                    "Recount visible words and metadata characters before returning the complete product."
+                )
             try:
                 response = self.client.responses.parse(
                     model=self.model,
@@ -99,9 +108,11 @@ class OpenAIProductGenerator:
                     if isinstance(parsed, GeneratedProductData)
                     else GeneratedProductData.model_validate(parsed)
                 )
+                product = _normalize_recoverable_draft(product)
+                previous_draft = json.dumps(product.model_dump(mode="json"), ensure_ascii=False)
                 verified_product = _inject_verified_research(product, sources, comparison)
                 validation_feedback = _draft_quality_errors(
-                    verified_product
+                    verified_product, sources
                 ) + factual_support_errors(
                     verified_product, sources
                 )
@@ -116,10 +127,10 @@ class OpenAIProductGenerator:
             except ProductGenerationError as exc:
                 validation_feedback = [str(exc)]
 
-            if attempt == 1:
+            if attempt == MAX_GENERATION_ATTEMPTS - 1:
                 break
         raise ProductGenerationError(
-            "Generated product failed validation after one repair attempt: "
+            "Generated product failed validation after two repair attempts: "
             + "; ".join(validation_feedback)
         )
 
@@ -152,11 +163,12 @@ class CompatibleProductGenerator:
             raise ProductGenerationError("At least one normalized source is required")
         research_json = _research_json(sources, comparison)
         feedback: list[str] = []
+        previous_draft: str | None = None
         input_tokens = 0
         output_tokens = 0
         schema = GeneratedProductData.model_json_schema()
 
-        for attempt in range(2):
+        for attempt in range(MAX_GENERATION_ATTEMPTS):
             user_content = research_json
             if not self.route.supports_json_schema:
                 user_content += (
@@ -165,7 +177,12 @@ class CompatibleProductGenerator:
                 )
             if feedback:
                 user_content += "\n\nVALIDATION ERRORS FROM THE PREVIOUS ATTEMPT:\n- " + "\n- ".join(feedback)
-                user_content += "\nReturn corrected JSON without introducing new facts."
+                if previous_draft:
+                    user_content += "\n\nPREVIOUS DRAFT TO REPAIR:\n" + previous_draft
+                user_content += (
+                    "\nReturn the complete corrected JSON. Fix every listed error without introducing "
+                    "new facts, and recount visible words and metadata characters before responding."
+                )
             response_format = (
                 {"type": "json_schema", "json_schema": {"name": "generated_product", "strict": True, "schema": schema}}
                 if self.route.supports_json_schema else {"type": "json_object"}
@@ -189,11 +206,13 @@ class CompatibleProductGenerator:
                     content,
                     fallback_title=_fallback_product_title(sources),
                 )
+                product = _normalize_recoverable_draft(product)
+                previous_draft = json.dumps(product.model_dump(mode="json"), ensure_ascii=False)
             except (json.JSONDecodeError, TypeError, ValidationError) as exc:
                 feedback = [str(exc)]
             else:
                 verified_product = _inject_verified_research(product, sources, comparison)
-                feedback = _draft_quality_errors(verified_product) + factual_support_errors(
+                feedback = _draft_quality_errors(verified_product, sources) + factual_support_errors(
                     verified_product, sources
                 )
                 if not feedback:
@@ -204,10 +223,10 @@ class CompatibleProductGenerator:
                         input_cost_per_million=self.route.input_cost_per_million,
                         output_cost_per_million=self.route.output_cost_per_million,
                     )
-            if attempt == 1:
+            if attempt == MAX_GENERATION_ATTEMPTS - 1:
                 break
         raise ProductGenerationError(
-            "Generated product failed validation after one repair attempt: " + "; ".join(feedback)
+            "Generated product failed validation after two repair attempts: " + "; ".join(feedback)
         )
 
 
@@ -379,6 +398,21 @@ def _normalize_model_payload(
     return {key: value for key, value in normalized.items() if key in allowed}
 
 
+def _normalize_recoverable_draft(product: GeneratedProductData) -> GeneratedProductData:
+    """Correct harmless boundary misses without changing product facts."""
+    meta_description = product.seo.meta_description.strip()
+    if 135 <= len(meta_description) < 140:
+        meta_description = meta_description.rstrip(" .!?") + ". View details."
+
+    if meta_description == product.seo.meta_description:
+        return product
+    return product.model_copy(
+        update={
+            "seo": product.seo.model_copy(update={"meta_description": meta_description})
+        }
+    )
+
+
 def _normalize_pack(item: dict[str, Any]) -> dict[str, Any]:
     pack = dict(item)
     pack["label"] = pack.get("label") or pack.get("pack_size") or pack.get("name") or ""
@@ -405,7 +439,10 @@ def _fallback_product_title(sources: list[NormalizedProductSource]) -> str:
     return min(titles, key=len) if titles else ""
 
 
-def _draft_quality_errors(product: GeneratedProductData) -> list[str]:
+def _draft_quality_errors(
+    product: GeneratedProductData,
+    sources: list[NormalizedProductSource] | None = None,
+) -> list[str]:
     errors = []
     if not product.product_title.strip():
         errors.append("product_title must not be empty")
@@ -418,7 +455,139 @@ def _draft_quality_errors(product: GeneratedProductData) -> list[str]:
         )
     ):
         errors.append("draft must contain descriptive product content")
+    rich_evidence = _has_rich_content_evidence(sources or [])
+
+    short_words = _visible_word_count(product.short_description)
+    if short_words > 120:
+        errors.append(f"short_description must not exceed 120 words; received {short_words}")
+    elif rich_evidence and short_words < 80:
+        errors.append(
+            f"short_description must contain 80-120 words for the supplied evidence; received {short_words}"
+        )
+
+    description_words = _visible_word_count(product.description)
+    if description_words > 500:
+        errors.append(f"description must not exceed 500 visible words; received {description_words}")
+    elif rich_evidence and description_words < 400:
+        missing_words = 400 - description_words
+        errors.append(
+            "description must contain 400-500 visible words for the supplied evidence; "
+            f"received {description_words}. Add at least {missing_words} useful, evidence-backed "
+            "visible words while keeping the total at or below 500"
+        )
+    if product.description:
+        tags = {tag.casefold() for tag in re.findall(r"</?\s*([a-zA-Z][a-zA-Z0-9]*)", product.description)}
+        unsupported_tags = sorted(tags - {"h2", "h3", "p", "ul", "ol", "li", "strong"})
+        if unsupported_tags:
+            errors.append(
+                "description contains unsupported HTML tags: " + ", ".join(unsupported_tags)
+            )
+        if re.search(r"(?m)^\s{0,3}#{1,6}\s", product.description):
+            errors.append("description must use semantic HTML headings, not Markdown headings")
+        html_validator = _CatalogHTMLValidator()
+        html_validator.feed(product.description)
+        html_validator.close()
+        if html_validator.invalid:
+            errors.append("description must contain valid, properly nested, attribute-free HTML")
+        if rich_evidence:
+            lowered_description = product.description.casefold()
+            if "<h2" not in lowered_description:
+                errors.append("description must use semantic HTML section headings")
+            for required_section in ("benefits", "how to use", "safety information"):
+                if required_section not in lowered_description:
+                    errors.append(f"description is missing the {required_section!r} section")
+
+    highlight_count = len(product.highlights)
+    if highlight_count > 12:
+        errors.append(f"highlights must contain no more than 12 items; received {highlight_count}")
+    elif rich_evidence and highlight_count < 8:
+        errors.append(
+            f"highlights must contain 8-12 evidence-backed items; received {highlight_count}"
+        )
+
+    meta_title_length = len(product.seo.meta_title.strip())
+    if not 50 <= meta_title_length <= 60:
+        errors.append(
+            f"seo.meta_title must contain 50-60 characters; received {meta_title_length}"
+        )
+    meta_description_length = len(product.seo.meta_description.strip())
+    if not 140 <= meta_description_length <= 160:
+        errors.append(
+            "seo.meta_description must contain 140-160 characters; "
+            f"received {meta_description_length}"
+        )
+
+    keywords = [keyword.strip() for keyword in product.seo.meta_keywords if keyword.strip()]
+    if not 8 <= len(keywords) <= 15:
+        errors.append(f"seo.meta_keywords must contain 8-15 items; received {len(keywords)}")
+    if len({keyword.casefold() for keyword in keywords}) != len(keywords):
+        errors.append("seo.meta_keywords must not contain duplicate terms")
+    if not product.seo.business_meta_title.strip():
+        errors.append("seo.business_meta_title must not be empty")
+    elif product.seo.business_meta_title.strip() == product.seo.meta_title.strip():
+        errors.append("seo.business_meta_title must be distinct from seo.meta_title")
+    if not product.seo.business_meta_description.strip():
+        errors.append("seo.business_meta_description must not be empty")
+    elif product.seo.business_meta_description.strip() == product.seo.meta_description.strip():
+        errors.append(
+            "seo.business_meta_description must be distinct from seo.meta_description"
+        )
     return errors
+
+
+class _CatalogHTMLValidator(HTMLParser):
+    allowed_tags = {"h2", "h3", "p", "ul", "ol", "li", "strong"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.stack: list[str] = []
+        self.invalid = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        normalized = tag.casefold()
+        if normalized not in self.allowed_tags or attrs:
+            self.invalid = True
+        self.stack.append(normalized)
+
+    def handle_endtag(self, tag: str) -> None:
+        normalized = tag.casefold()
+        if not self.stack or self.stack[-1] != normalized:
+            self.invalid = True
+            return
+        self.stack.pop()
+
+    def close(self) -> None:
+        super().close()
+        if self.stack:
+            self.invalid = True
+
+
+def _visible_word_count(value: str) -> int:
+    visible_text = re.sub(r"<[^>]*>", " ", value or "")
+    return len(re.findall(r"\b[\w]+(?:[-'][\w]+)*\b", visible_text, flags=re.UNICODE))
+
+
+def _has_rich_content_evidence(sources: list[NormalizedProductSource]) -> bool:
+    facts: set[str] = set()
+    description_words = 0
+    for source in sources:
+        description_words += _visible_word_count(source.description or "")
+        for item in (
+            *source.features,
+            *source.benefits,
+            *source.how_to_use,
+            *source.precautions,
+        ):
+            if item.strip():
+                facts.add(item.strip().casefold())
+        for name, value in source.specifications.items():
+            facts.add(f"{name.strip().casefold()}:{value.strip().casefold()}")
+        for item in source.variations:
+            facts.add(f"variation:{item.name.strip().casefold()}")
+        for item in source.packs:
+            facts.add(f"pack:{item.label.strip().casefold()}")
+    evidence_score = len(facts) + min(description_words // 30, 10)
+    return evidence_score >= 10
 
 
 def _safe_route_error(error: Exception) -> str:
@@ -528,6 +697,10 @@ def _inject_verified_research(
         if field_path.startswith("pricing.") and field.selected_value is not None:
             verified_pricing[field_path.removeprefix("pricing.")] = field.selected_value
     pricing = product.pricing.model_copy(update=verified_pricing)
+    highlights = _merge_verified_highlights(product, sources, verified_specifications)
+    variations = _merge_verified_variations(product, sources)
+    packs = _merge_verified_packs(product, sources)
+    images = _complete_image_metadata(product)
 
     resolved_conflicts = []
     for conflict in comparison.conflicts:
@@ -545,6 +718,10 @@ def _inject_verified_research(
             **verified_scalars,
             "specifications": verified_specifications,
             "pricing": pricing,
+            "highlights": highlights,
+            "variations": variations,
+            "packs": packs,
+            "images": images,
             "seo": seo,
             "source_evidence": evidence,
             "conflicts": resolved_conflicts,
@@ -557,3 +734,122 @@ def _inject_verified_research(
 
     return enrich_with_surginatal(updated_product)
 
+
+def _complete_image_metadata(product: GeneratedProductData) -> list[ProductImage]:
+    title = product.product_title.strip() or product.business_product_title.strip() or "Product"
+    completed = []
+    for index, image in enumerate(product.images):
+        primary = bool(image.primary_candidate)
+        fallback_title = (
+            f"{title} - Primary Image" if primary else f"{title} - Image {index + 1}"
+        )
+        fallback_alt = (
+            f"{title} primary product image"
+            if primary
+            else f"{title} alternate product image {index + 1}"
+        )
+        completed.append(
+            image.model_copy(
+                update={
+                    "title": image.title.strip() if image.title else fallback_title,
+                    "alt": image.alt.strip() if image.alt else fallback_alt,
+                }
+            )
+        )
+    return completed
+
+
+def _merge_verified_highlights(
+    product: GeneratedProductData,
+    sources: list[NormalizedProductSource],
+    verified_specifications: dict[str, str],
+) -> list[Highlight]:
+    """Add useful scraped features/specifications without replacing AI-written highlights."""
+    highlights = list(product.highlights)
+    seen_values = {_normalized_choice_text(item.value) for item in highlights}
+
+    candidates: list[tuple[str, str]] = []
+    for source in sources:
+        candidates.extend(("Key Feature", feature) for feature in source.features)
+    candidates.extend(verified_specifications.items())
+
+    for name, value in candidates:
+        clean_name, clean_value = str(name).strip(), str(value).strip()
+        value_key = _normalized_choice_text(clean_value)
+        if not clean_name or not clean_value or value_key in seen_values:
+            continue
+        highlights.append(Highlight(name=clean_name, value=clean_value))
+        seen_values.add(value_key)
+        if len(highlights) >= 12:
+            break
+    return highlights
+
+
+def _merge_verified_variations(
+    product: GeneratedProductData,
+    sources: list[NormalizedProductSource],
+) -> list[ProductVariation]:
+    variations = list(product.variations)
+    positions = {_variation_key(item): index for index, item in enumerate(variations)}
+    for source in sources:
+        for item in source.variations:
+            key = _variation_key(item)
+            if key not in positions:
+                positions[key] = len(variations)
+                variations.append(item)
+                continue
+            index = positions[key]
+            current = variations[index]
+            variations[index] = current.model_copy(
+                update={
+                    "price": current.price if current.price is not None else item.price,
+                    "mrp": current.mrp if current.mrp is not None else item.mrp,
+                    "sku": current.sku or item.sku,
+                    "attributes": {**item.attributes, **current.attributes},
+                }
+            )
+    return variations
+
+
+def _merge_verified_packs(
+    product: GeneratedProductData,
+    sources: list[NormalizedProductSource],
+) -> list[ProductPack]:
+    packs = list(product.packs)
+    positions = {_pack_key(item): index for index, item in enumerate(packs)}
+    for source in sources:
+        for item in source.packs:
+            key = _pack_key(item)
+            if key not in positions:
+                positions[key] = len(packs)
+                packs.append(item)
+                continue
+            index = positions[key]
+            current = packs[index]
+            packs[index] = current.model_copy(
+                update={
+                    "quantity": current.quantity or item.quantity,
+                    "price": current.price if current.price is not None else item.price,
+                    "mrp": current.mrp if current.mrp is not None else item.mrp,
+                    "sku": current.sku or item.sku,
+                }
+            )
+    return packs
+
+
+def _variation_key(item: ProductVariation) -> tuple[str, tuple[tuple[str, str], ...]]:
+    attributes = tuple(
+        sorted(
+            (_normalized_choice_text(key), _normalized_choice_text(value))
+            for key, value in item.attributes.items()
+        )
+    )
+    return _normalized_choice_text(item.name), attributes
+
+
+def _pack_key(item: ProductPack) -> tuple[str, int | None]:
+    return _normalized_choice_text(item.label), item.quantity
+
+
+def _normalized_choice_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value)).strip().casefold()

@@ -1,7 +1,14 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import RichEditor from "../RichEditor";
 
-export default function ProductAdminForm({ draft, onChange, locked }) {
+export default function ProductAdminForm({
+  draft,
+  onChange,
+  onLocalImagesChange,
+  locked,
+  taxonomy,
+  taxonomyLoading = false,
+}) {
   const [detailsTab, setDetailsTab] = useState("Pricing"); // "Pricing" | "Restock" | "SEO"
 
   const setField = (key, value) => {
@@ -15,6 +22,48 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
         ...(draft[parent] || {}),
         [key]: value,
       },
+    });
+  };
+
+  const categories = includeCurrentOption(
+    taxonomy?.categories || [],
+    draft.category,
+    draft.category_id,
+    "subcategories",
+  );
+  const selectedCategory = categories.find(
+    (item) => optionKey(item) === optionKey({ id: draft.category_id, name: draft.category }),
+  );
+  const subcategories = includeCurrentOption(
+    selectedCategory?.subcategories || [],
+    draft.subcategory,
+    draft.subcategory_id,
+  );
+  const brands = includeCurrentOption(taxonomy?.brands || [], draft.brand, draft.brand_id);
+
+  const selectCategory = (option) => {
+    const categoryChanged = optionKey(option) !== optionKey({ id: draft.category_id, name: draft.category });
+    onChange({
+      ...draft,
+      category: option?.name || null,
+      category_id: option?.id ?? null,
+      ...(categoryChanged ? { subcategory: null, subcategory_id: null } : {}),
+    });
+  };
+
+  const selectSubcategory = (option) => {
+    onChange({
+      ...draft,
+      subcategory: option?.name || null,
+      subcategory_id: option?.id ?? null,
+    });
+  };
+
+  const selectBrand = (option) => {
+    onChange({
+      ...draft,
+      brand: option?.name || null,
+      brand_id: option?.id ?? null,
     });
   };
 
@@ -34,27 +83,61 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
     }
     return "";
   }, [draft.highlights]);
+  const editableHighlightsHtml = draft.short_description?.includes("<")
+    ? draft.short_description
+    : highlightsHtml || draft.short_description || "";
 
   const [activeImageIndex, setActiveImageIndex] = useState(0);
+  const [localImages, setLocalImages] = useState([]);
+  const fileInputRef = useRef(null);
+  const localImageUrlsRef = useRef([]);
 
   // Image helpers
   const images = draft.images || [];
-  const addImage = () => {
-    const newImages = [
-      ...images,
-      {
-        url: "",
-        title: "",
-        alt: "",
-        primary_candidate: images.length === 0,
-        reference_only: true,
-      },
-    ];
-    onChange({ ...draft, images: newImages });
-    setActiveImageIndex(newImages.length - 1);
+  const displayImages = [...images, ...localImages];
+
+  useEffect(() => () => {
+    localImageUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+  }, []);
+
+  useEffect(() => {
+    onLocalImagesChange?.(localImages);
+  }, [localImages, onLocalImagesChange]);
+
+  const addLocalImages = (event) => {
+    const files = Array.from(event.target.files || []).filter((file) => file.type.startsWith("image/"));
+    if (!files.length) return;
+    const productTitle = draft.product_title?.trim() || "Product";
+    const startIndex = images.length + localImages.length;
+    const needsPrimaryImage = !displayImages.some((image) => image.primary_candidate);
+    const additions = files.map((file, offset) => {
+      const url = URL.createObjectURL(file);
+      localImageUrlsRef.current.push(url);
+      const imageNumber = startIndex + offset + 1;
+      return {
+        preview_id: `${file.name}-${file.lastModified}-${offset}`,
+        file,
+        url,
+        title: `${productTitle} - Image ${imageNumber}`,
+        alt: `${productTitle} product image ${imageNumber}`,
+        primary_candidate: needsPrimaryImage && offset === 0,
+        reference_only: false,
+        is_local_preview: true,
+      };
+    });
+    setLocalImages((current) => [...current, ...additions]);
+    setActiveImageIndex(startIndex);
+    event.target.value = "";
   };
 
   const updateImage = (index, field, value) => {
+    if (index >= images.length) {
+      const localIndex = index - images.length;
+      setLocalImages((current) => current.map((image, itemIndex) => (
+        itemIndex === localIndex ? { ...image, [field]: value } : image
+      )));
+      return;
+    }
     const updated = images.map((img, i) => {
       if (i === index) {
         return { ...img, [field]: value };
@@ -70,10 +153,26 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
       primary_candidate: i === index,
     }));
     onChange({ ...draft, images: updated });
+    setLocalImages((current) => current.map((img, localIndex) => ({
+      ...img,
+      primary_candidate: index >= images.length && localIndex === index - images.length,
+    })));
     setActiveImageIndex(index);
   };
 
   const removeImage = (index) => {
+    if (index >= images.length) {
+      const localIndex = index - images.length;
+      setLocalImages((current) => {
+        const removed = current[localIndex];
+        if (removed?.url) URL.revokeObjectURL(removed.url);
+        return current.filter((_, itemIndex) => itemIndex !== localIndex);
+      });
+      if (activeImageIndex >= displayImages.length - 1) {
+        setActiveImageIndex(Math.max(0, displayImages.length - 2));
+      }
+      return;
+    }
     const next = images.filter((_, i) => i !== index);
     onChange({ ...draft, images: next });
     if (activeImageIndex >= next.length) {
@@ -185,7 +284,7 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
           </p>
 
           <div className="mt-4 flex flex-wrap items-start gap-4">
-            {images.map((img, index) => {
+            {displayImages.map((img, index) => {
               const isPrimary = Boolean(img.primary_candidate);
               const isSelected = activeImageIndex === index;
               return (
@@ -197,7 +296,7 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
                       ? "border-brand-500 ring-2 ring-brand-400/20"
                       : "border-slate-200 hover:border-slate-300"
                   } bg-slate-950`}
-                  key={index}
+                  key={img.preview_id || `${img.url}-${index}`}
                   onClick={() => setActiveImageIndex(index)}
                 >
                   {/* Star Primary Button */}
@@ -251,6 +350,11 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
                       Primary
                     </span>
                   )}
+                  {img.is_local_preview && (
+                    <span className="absolute bottom-1.5 left-1/2 z-10 -translate-x-1/2 rounded-full bg-slate-900/80 px-2 py-0.5 text-[9px] font-bold text-white shadow-sm">
+                      Local preview
+                    </span>
+                  )}
                 </div>
               );
             })}
@@ -259,38 +363,54 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
             <button
               className="flex h-28 w-28 shrink-0 flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50/50 text-slate-400 transition-all hover:border-brand-500 hover:bg-brand-50/30 hover:text-brand-700 cursor-pointer disabled:opacity-50"
               disabled={locked}
-              onClick={addImage}
+              onClick={() => fileInputRef.current?.click()}
               type="button"
             >
               <span className="text-2xl font-light leading-none">+</span>
               <span className="mt-1 text-xs font-semibold">Add photo</span>
             </button>
+            <input
+              accept="image/*"
+              className="hidden"
+              disabled={locked}
+              multiple
+              onChange={addLocalImages}
+              ref={fileInputRef}
+              type="file"
+            />
           </div>
 
           {/* Details input for the selected image */}
-          {images[activeImageIndex] && (
-            <div className="mt-4 max-w-sm space-y-2.5 pt-2">
+          {displayImages[activeImageIndex] && (
+            <div className="mt-4 w-full space-y-2.5 pt-2">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Image {activeImageIndex + 1} details
+              </p>
+              <label className="block text-[11px] font-bold text-slate-600">
+                Title
               <input
-                className="field text-xs font-medium"
+                className="field mt-1 text-xs font-medium"
                 disabled={locked}
                 onChange={(e) => updateImage(activeImageIndex, "title", e.target.value)}
-                placeholder="Title"
-                value={images[activeImageIndex].title || ""}
+                placeholder="Image title"
+                value={displayImages[activeImageIndex].title || ""}
               />
+              </label>
+              <label className="block text-[11px] font-bold text-slate-600">
+                Alt text
               <input
-                className="field text-xs font-medium"
+                className="field mt-1 text-xs font-medium"
                 disabled={locked}
                 onChange={(e) => updateImage(activeImageIndex, "alt", e.target.value)}
-                placeholder="Alt text"
-                value={images[activeImageIndex].alt || ""}
+                placeholder="Describe the image for accessibility"
+                value={displayImages[activeImageIndex].alt || ""}
               />
-              <input
-                className="field text-xs font-medium text-slate-600"
-                disabled={locked}
-                onChange={(e) => updateImage(activeImageIndex, "url", e.target.value)}
-                placeholder="Image URL (paste or edit)"
-                value={images[activeImageIndex].url || ""}
-              />
+              </label>
+              {displayImages[activeImageIndex].is_local_preview && (
+                <p className="text-[11px] font-medium text-amber-700">
+                  This local file will be uploaded to Surginatal when you click Save changes.
+                </p>
+              )}
             </div>
           )}
         </div>
@@ -313,9 +433,9 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
               disabled={locked}
               height="320px"
               id="product-highlights-editor"
-              onChange={(html) => setField("highlights", html)}
+              onChange={(html) => setField("short_description", html)}
               placeholder="Add product highlights, bullet points, key features..."
-              value={highlightsHtml}
+              value={editableHighlightsHtml}
             />
           </div>
         </div>
@@ -892,78 +1012,38 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
           <p className="text-xs font-black uppercase tracking-wider text-slate-500">
             ORGANISE
           </p>
-          <div>
-            <div className="flex items-center justify-between">
-              <label className="block text-xs font-bold text-slate-700">Category *</label>
-              <div className="flex items-center gap-1.5 text-xs">
-                <span className="text-[11px] font-bold text-slate-500">Surginatal ID:</span>
-                <input
-                  className="w-16 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-center font-mono text-xs font-bold text-emerald-800 focus:border-brand-600 focus:bg-white focus:outline-none"
-                  disabled={locked}
-                  onChange={(e) => setField("category_id", e.target.value ? Number(e.target.value) : null)}
-                  placeholder="None"
-                  title="Surginatal Category ID"
-                  type="number"
-                  value={draft.category_id ?? ""}
-                />
-              </div>
-            </div>
-            <input
-              className="field mt-1"
-              disabled={locked}
-              onChange={(e) => setField("category", e.target.value)}
-              placeholder="Select category"
-              value={draft.category || ""}
-            />
-          </div>
-          <div>
-            <div className="flex items-center justify-between">
-              <label className="block text-xs font-bold text-slate-700">Sub-category *</label>
-              <div className="flex items-center gap-1.5 text-xs">
-                <span className="text-[11px] font-bold text-slate-500">Surginatal ID:</span>
-                <input
-                  className="w-16 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-center font-mono text-xs font-bold text-emerald-800 focus:border-brand-600 focus:bg-white focus:outline-none"
-                  disabled={locked}
-                  onChange={(e) => setField("subcategory_id", e.target.value ? Number(e.target.value) : null)}
-                  placeholder="None"
-                  title="Surginatal Sub-category ID"
-                  type="number"
-                  value={draft.subcategory_id ?? ""}
-                />
-              </div>
-            </div>
-            <input
-              className="field mt-1"
-              disabled={locked}
-              onChange={(e) => setField("subcategory", e.target.value)}
-              placeholder="Select sub-category"
-              value={draft.subcategory || ""}
-            />
-          </div>
-          <div>
-            <div className="flex items-center justify-between">
-              <label className="block text-xs font-bold text-slate-700">Brand *</label>
-              <div className="flex items-center gap-1.5 text-xs">
-                <span className="text-[11px] font-bold text-slate-500">Surginatal ID:</span>
-                <input
-                  className="w-16 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-center font-mono text-xs font-bold text-emerald-800 focus:border-brand-600 focus:bg-white focus:outline-none"
-                  disabled={locked}
-                  onChange={(e) => setField("brand_id", e.target.value ? Number(e.target.value) : null)}
-                  placeholder="None"
-                  title="Surginatal Brand ID"
-                  type="number"
-                  value={draft.brand_id ?? ""}
-                />
-              </div>
-            </div>
-            <input
-              className="field mt-1 font-bold text-brand-800"
-              disabled={locked}
-              onChange={(e) => setField("brand", e.target.value)}
-              placeholder="Select brand"
-              value={draft.brand || ""}
-            />
-          </div>
+          <TaxonomySelect
+            label="Category"
+            loading={taxonomyLoading}
+            locked={locked}
+            onChange={selectCategory}
+            options={categories}
+            placeholder="Select category"
+            selectedId={draft.category_id}
+            selectedName={draft.category}
+          />
+          <TaxonomySelect
+            disabled={!selectedCategory || subcategories.length === 0}
+            label="Sub-category"
+            loading={taxonomyLoading}
+            locked={locked}
+            onChange={selectSubcategory}
+            options={subcategories}
+            placeholder={selectedCategory ? "Select sub-category" : "Select a category first"}
+            selectedId={draft.subcategory_id}
+            selectedName={draft.subcategory}
+          />
+          <TaxonomySelect
+            label="Brand"
+            loading={taxonomyLoading}
+            locked={locked}
+            onChange={selectBrand}
+            options={brands}
+            placeholder="Select brand"
+            selectedId={draft.brand_id}
+            selectedName={draft.brand}
+            strong
+          />
         </div>
 
         {/* RELATED PRODUCTS CARD */}
@@ -981,6 +1061,71 @@ export default function ProductAdminForm({ draft, onChange, locked }) {
           />
         </div>
       </div>
+    </div>
+  );
+}
+
+function optionKey(option) {
+  if (option?.id != null) return `id:${option.id}`;
+  return `name:${String(option?.name || "").trim().toLocaleLowerCase()}`;
+}
+
+function includeCurrentOption(options, currentName, currentId, childrenKey = null) {
+  const result = [...options];
+  if (!currentName) return result;
+  const current = {
+    id: currentId ?? null,
+    name: currentName,
+    ...(childrenKey ? { [childrenKey]: [] } : {}),
+  };
+  if (!result.some((item) => optionKey(item) === optionKey(current))) result.push(current);
+  return result;
+}
+
+function TaxonomySelect({
+  label,
+  options,
+  selectedId,
+  selectedName,
+  onChange,
+  placeholder,
+  locked,
+  loading,
+  disabled = false,
+  strong = false,
+}) {
+  const selectedKey = selectedName ? optionKey({ id: selectedId, name: selectedName }) : "";
+
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3">
+        <label className="block text-xs font-bold text-slate-700">{label} *</label>
+        <div className="flex items-center gap-1.5 text-xs">
+          <span className="text-[11px] font-bold text-slate-500">Surginatal ID:</span>
+          <span className="min-w-16 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-center font-mono text-xs font-bold text-emerald-800">
+            {selectedId ?? "None"}
+          </span>
+        </div>
+      </div>
+      <select
+        className={`field mt-1 cursor-pointer ${strong ? "font-bold text-brand-800" : ""}`}
+        disabled={locked || disabled || loading}
+        onChange={(event) => {
+          const option = options.find((item) => optionKey(item) === event.target.value);
+          onChange(option || null);
+        }}
+        value={selectedKey}
+      >
+        <option value="">{loading ? "Loading Surginatal options…" : placeholder}</option>
+        {options.map((option) => (
+          <option key={optionKey(option)} value={optionKey(option)}>
+            {option.name}
+          </option>
+        ))}
+      </select>
+      {!loading && options.length === 0 && (
+        <p className="mt-1 text-[11px] font-medium text-amber-700">No Surginatal options are available.</p>
+      )}
     </div>
   );
 }

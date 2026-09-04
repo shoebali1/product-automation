@@ -12,9 +12,18 @@ class Highlight(StrictSchema):
 
 
 class SEOData(StrictSchema):
-    meta_title: str = ""
-    meta_keywords: list[str] = Field(default_factory=list)
-    meta_description: str = ""
+    meta_title: str = Field(
+        default="",
+        description="Unique, natural, search-focused title targeting 50-60 characters.",
+    )
+    meta_keywords: list[str] = Field(
+        default_factory=list,
+        description="Eight to fifteen focused, non-duplicative, evidence-based search terms.",
+    )
+    meta_description: str = Field(
+        default="",
+        description="Unique human-readable search summary targeting 140-160 characters.",
+    )
     canonical_link: str | None = None
     business_meta_title: str = ""
     business_meta_description: str = ""
@@ -25,6 +34,7 @@ class GeneratedProductData(StrictSchema):
     product_title: str
     slug: str
     business_product_title: str
+    surginatal_product_id: int | None = None
     brand: str | None = None
     brand_id: int | None = None
     manufacturer: str | None = None
@@ -51,16 +61,37 @@ class GeneratedProductData(StrictSchema):
     pieces: int | None = 1
     in_stock_quantity: int | None = 100
     sales_count: int | None = 0
-    highlights: list[Highlight] = Field(default_factory=list)
-    short_description: str = ""
-    description: str = ""
+    highlights: list[Highlight] = Field(
+        default_factory=list,
+        description="Detailed, non-repetitive, evidence-backed buyer highlights with meaningful labels.",
+    )
+    short_description: str = Field(
+        default="",
+        description=(
+            "Original, information-dense 80-120 word buyer summary when verified evidence "
+            "supports that length."
+        ),
+    )
+    description: str = Field(
+        default="",
+        description=(
+            "Original 400-500 word SEO-friendly storefront HTML organized with semantic "
+            "headings, paragraphs, benefits, usage steps, and safety lists."
+        ),
+    )
     benefits: list[str] = Field(default_factory=list)
     how_to_use: list[str] = Field(default_factory=list)
     precautions: list[str] = Field(default_factory=list)
     specifications: dict[str, str] = Field(default_factory=dict)
     images: list[ProductImage] = Field(default_factory=list)
-    variations: list[ProductVariation] = Field(default_factory=list)
-    packs: list[ProductPack] = Field(default_factory=list)
+    variations: list[ProductVariation] = Field(
+        default_factory=list,
+        description="All evidence-backed selectable size, colour, model, capacity, strength, or configuration options.",
+    )
+    packs: list[ProductPack] = Field(
+        default_factory=list,
+        description="All evidence-backed purchasable pack, box, set, count, or unit quantity options.",
+    )
     pricing: Pricing = Field(default_factory=Pricing)
     seo: SEOData = Field(default_factory=SEOData)
     source_evidence: dict[str, Any] = Field(default_factory=dict)
@@ -87,4 +118,3 @@ class GeneratedProductData(StrictSchema):
         if "--" in value or value.startswith("-") or value.endswith("-"):
             raise ValueError("slug must use single hyphens between words")
         return value
-

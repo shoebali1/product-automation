@@ -24,7 +24,7 @@ def find_products(documents: Iterable[Any]) -> list[dict[str, Any]]:
     products: list[dict[str, Any]] = []
     for document in documents:
         for node in _walk_nodes(document):
-            if _has_type(node, "Product"):
+            if _has_type(node, "Product") or _has_type(node, "ProductGroup"):
                 products.append(node)
     return products
 
@@ -33,7 +33,14 @@ def choose_product(products: list[dict[str, Any]]) -> dict[str, Any] | None:
     if not products:
         return None
     score_fields = ("name", "description", "image", "sku", "gtin", "brand", "offers")
-    return max(products, key=lambda product: sum(bool(product.get(field)) for field in score_fields))
+    return max(
+        products,
+        key=lambda product: (
+            10 * bool(product.get("hasVariant"))
+            + 5 * _has_type(product, "ProductGroup")
+            + sum(bool(product.get(field)) for field in score_fields)
+        ),
+    )
 
 
 def _walk_nodes(value: Any):
@@ -54,4 +61,3 @@ def _has_type(node: dict[str, Any], expected: str) -> bool:
     node_type = node.get("@type")
     values = node_type if isinstance(node_type, list) else [node_type]
     return any(str(value).rsplit("/", 1)[-1].lower() == expected.lower() for value in values if value)
-

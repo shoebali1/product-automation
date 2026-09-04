@@ -62,6 +62,7 @@ export default function JobStatusPage() {
   const job = jobQuery.data;
   const completed = job.successful_urls + job.failed_urls;
   const progress = job.total_urls ? Math.round((completed / job.total_urls) * 100) : 0;
+  const generationActive = job.status === "ANALYZING" || isGenerating;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -77,13 +78,13 @@ export default function JobStatusPage() {
           <p className="mt-1 font-mono text-xs text-slate-500">Job ID: {job.id}</p>
         </div>
         <div className="flex gap-3">
-          {(job.status === "SCRAPED" || isGenerating || job.status === "ANALYZING") && !job.latest_product_id && (
+          {(job.status === "SCRAPED" || generationActive) && !job.latest_product_id && (
             <button
               className="rounded-xl bg-gradient-to-r from-brand-600 to-brand-700 px-5 py-3 text-xs font-black text-white shadow-xs hover:from-brand-700 hover:to-brand-800 disabled:opacity-50 transition-all cursor-pointer"
-              disabled={generate.isPending || isGenerating || job.status === "ANALYZING"}
+              disabled={generate.isPending || generationActive}
               onClick={() => generate.mutate()}
             >
-              {generate.isPending || isGenerating || job.status === "ANALYZING"
+              {generate.isPending || generationActive
                 ? "Generating with AI…"
                 : "Generate draft"}
             </button>
@@ -105,8 +106,32 @@ export default function JobStatusPage() {
         </div>
       )}
 
-      {(job.status === "ANALYZING" || isGenerating) && !job.latest_product_id && (
-        <div className="flex items-center gap-4 rounded-2xl border border-violet-200 bg-violet-50/90 p-5 text-violet-950 shadow-xs">
+      <WorkflowProgress job={job} generationActive={generationActive} />
+
+      {job.status === "SCRAPED" && !job.latest_product_id && !generationActive && (
+        <section className="rounded-2xl border-2 border-brand-300 bg-gradient-to-r from-brand-50 via-white to-violet-50 p-5 shadow-sm sm:p-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs font-black uppercase tracking-wider text-brand-700">Next step required</p>
+              <h2 className="mt-1 text-lg font-black text-ink-950">Sources analyzed — generate the product draft</h2>
+              <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-600">
+                Scraping is complete. Start AI generation to combine the source data into the final catalog record.
+              </p>
+            </div>
+            <button
+              className="shrink-0 rounded-xl bg-gradient-to-r from-brand-600 to-brand-700 px-6 py-3 text-xs font-black text-white shadow-sm transition-all hover:from-brand-700 hover:to-brand-800 disabled:opacity-50"
+              disabled={generate.isPending}
+              onClick={() => generate.mutate()}
+              type="button"
+            >
+              {generate.isPending ? "Starting AI…" : "Generate draft →"}
+            </button>
+          </div>
+        </section>
+      )}
+
+      {generationActive && !job.latest_product_id && (
+        <div aria-live="polite" className="flex items-center gap-4 rounded-2xl border border-violet-200 bg-violet-50/90 p-5 text-violet-950 shadow-xs">
           <div className="h-6 w-6 shrink-0 animate-spin rounded-full border-2 border-violet-600 border-t-transparent" />
           <div>
             <p className="font-bold text-sm">AI generation in progress…</p>
@@ -188,6 +213,72 @@ export default function JobStatusPage() {
         </div>
       </section>
     </div>
+  );
+}
+
+function WorkflowProgress({ job, generationActive }) {
+  const sourcesFinished = ["SCRAPED", "ANALYZING", "DRAFT", "REVIEW_REQUIRED", "APPROVED", "PUBLISHED"].includes(job.status);
+  const draftReady = Boolean(job.latest_product_id);
+  const stages = [
+    { label: "Sources submitted", state: "complete" },
+    {
+      label: "Analyze sources",
+      state: sourcesFinished ? "complete" : job.status === "FAILED" ? "failed" : "active",
+    },
+    {
+      label: "Generate AI draft",
+      state: draftReady ? "complete" : generationActive ? "active" : sourcesFinished ? "next" : "waiting",
+    },
+    { label: "Review product", state: draftReady ? "active" : "waiting" },
+  ];
+
+  const stageClasses = {
+    complete: "border-emerald-200 bg-emerald-50",
+    active: "border-violet-300 bg-violet-50",
+    next: "border-brand-300 bg-brand-50",
+    failed: "border-rose-200 bg-rose-50",
+    waiting: "border-slate-200 bg-slate-50",
+  };
+  const numberClasses = {
+    complete: "bg-emerald-600 text-white",
+    active: "bg-violet-600 text-white",
+    next: "bg-brand-700 text-white",
+    failed: "bg-rose-600 text-white",
+    waiting: "bg-slate-200 text-slate-500",
+  };
+  const stateLabels = {
+    complete: "Complete",
+    active: "In progress",
+    next: "Action needed",
+    failed: "Failed",
+    waiting: "Waiting",
+  };
+
+  return (
+    <section className="panel p-5 sm:p-6" aria-label="Research workflow">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-black uppercase tracking-wider text-slate-500">Workflow</p>
+          <p className="mt-1 text-xs text-slate-600">Follow the product from source collection to review.</p>
+        </div>
+        <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-bold text-slate-600">Live status</span>
+      </div>
+      <ol className="grid gap-3 sm:grid-cols-4">
+        {stages.map((stage, index) => (
+          <li className={`rounded-xl border p-3 ${stageClasses[stage.state]}`} key={stage.label}>
+            <div className="flex items-center gap-2">
+              <span className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-black ${numberClasses[stage.state]}`}>
+                {stage.state === "complete" ? "✓" : index + 1}
+              </span>
+              <span className="text-xs font-bold text-slate-800">{stage.label}</span>
+            </div>
+            <p className="mt-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              {stateLabels[stage.state]}
+            </p>
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }
 

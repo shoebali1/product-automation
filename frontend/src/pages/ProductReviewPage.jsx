@@ -10,18 +10,31 @@ import { productsApi } from "../services/api";
 export default function ProductReviewPage() {
   const { productId } = useParams();
   const [draft, setDraft] = useState(null);
+  const [localImages, setLocalImages] = useState([]);
   const queryClient = useQueryClient();
   const { notify } = useToast();
   const productQuery = useQuery({ queryKey: ["product", productId], queryFn: () => productsApi.get(productId) });
   const conflictsQuery = useQuery({ queryKey: ["product-conflicts", productId], queryFn: () => productsApi.conflicts(productId) });
+  const taxonomyQuery = useQuery({
+    queryKey: ["catalog-taxonomy"],
+    queryFn: productsApi.taxonomy,
+    staleTime: 60 * 60 * 1000,
+  });
 
   useEffect(() => {
-    if (productQuery.data) setDraft(structuredClone(productQuery.data.product_data));
+    if (productQuery.data) setDraft(withImageMetadata(productQuery.data.product_data));
   }, [productQuery.data]);
 
   const save = useMutation({
-    mutationFn: () => productsApi.update(productId, { version: productQuery.data.version, product_data: draft, override_note: null }),
-    onSuccess: (data) => { queryClient.setQueryData(["product", productId], data); notify("Draft changes saved."); },
+    mutationFn: () => productsApi.update(productId, {
+      version: productQuery.data.version,
+      product_data: draft,
+      override_note: null,
+    }),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["product", productId], data);
+      notify("Draft changes saved.");
+    },
     onError: (error) => notify(error.userMessage, "error"),
   });
   const approve = useMutation({
@@ -30,8 +43,15 @@ export default function ProductReviewPage() {
     onError: (error) => notify(error.userMessage, "error"),
   });
   const publish = useMutation({
-    mutationFn: () => productsApi.publish(productId),
-    onSuccess: (data) => { queryClient.setQueryData(["product", productId], data); notify("Product published."); },
+    mutationFn: async () => {
+      const submitted = await productsApi.submitToSurginatal(productId, draft, localImages);
+      queryClient.setQueryData(["product", productId], submitted.product);
+      return productsApi.publish(productId);
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData(["product", productId], data);
+      notify(`Product published to Surginatal as product ${data.product_data.surginatal_product_id}.`);
+    },
     onError: (error) => notify(error.userMessage, "error"),
   });
   const resolve = useMutation({
@@ -71,6 +91,14 @@ export default function ProductReviewPage() {
               <>
                 <span>•</span>
                 <span className="font-mono text-slate-600 font-medium">ID: {product.published_external_id}</span>
+              </>
+            )}
+            {draft.surginatal_product_id && (
+              <>
+                <span>•</span>
+                <span className="font-mono text-emerald-700 font-medium">
+                  Surginatal ID: {draft.surginatal_product_id}
+                </span>
               </>
             )}
           </div>
@@ -132,10 +160,34 @@ export default function ProductReviewPage() {
 
       {/* Direct Final Product Form (Tabs & manual evidence note removed per user request) */}
       <fieldset className="border-0 p-0 disabled:pointer-events-none" disabled={locked || resolve.isPending}>
-        <ProductAdminForm draft={draft} locked={locked} onChange={setDraft} />
+        <ProductAdminForm
+          draft={draft}
+          locked={locked}
+          onChange={setDraft}
+          onLocalImagesChange={setLocalImages}
+          taxonomy={taxonomyQuery.data}
+          taxonomyLoading={taxonomyQuery.isPending}
+        />
       </fieldset>
     </div>
   );
+}
+
+function withImageMetadata(productData) {
+  const draft = structuredClone(productData);
+  const productTitle = draft.product_title?.trim() || draft.business_product_title?.trim() || "Product";
+  draft.images = (draft.images || []).map((image, index) => ({
+    ...image,
+    title: image.title?.trim() || (
+      image.primary_candidate ? `${productTitle} - Primary Image` : `${productTitle} - Image ${index + 1}`
+    ),
+    alt: image.alt?.trim() || (
+      image.primary_candidate
+        ? `${productTitle} primary product image`
+        : `${productTitle} alternate product image ${index + 1}`
+    ),
+  }));
+  return draft;
 }
 
 function QualityContext({ context }) {

@@ -1,11 +1,16 @@
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 
 const ToastContext = createContext(null);
+let fallbackToastId = 0;
+
+function createToastId() {
+  return globalThis.crypto?.randomUUID?.() || `toast-${Date.now()}-${fallbackToastId++}`;
+}
 
 export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
   const notify = useCallback((message, type = "success") => {
-    const id = crypto.randomUUID();
+    const id = createToastId();
     setToasts((items) => [...items, { id, message, type }]);
     window.setTimeout(() => setToasts((items) => items.filter((item) => item.id !== id)), 4000);
   }, []);

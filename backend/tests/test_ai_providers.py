@@ -17,7 +17,7 @@ from app.db.base import Base
 from app.models.ai_provider import AIModel, AIProvider
 from app.products.comparison import compare_sources
 from app.schemas.ai_provider import AIModelCreate, AIModelUpdate, AIProviderUpdate
-from app.schemas.generated_product import GeneratedProductData
+from app.schemas.generated_product import GeneratedProductData, SEOData
 from app.schemas.product_source import NormalizedProductSource
 from app.services.ai_providers import (
     AIProviderConfigurationError,
@@ -44,7 +44,30 @@ def draft(brand: str) -> GeneratedProductData:
         product_title="Acme Widget W-1", slug="acme-widget-w-1",
         business_product_title="Acme Widget W-1", brand=brand, sku="W-1",
         short_description="A silicone widget.", description="A silicone widget.",
-        specifications={"Material": "Silicone"}, overall_confidence=Decimal("0.2"),
+        specifications={"Material": "Silicone"},
+        seo=SEOData(
+            meta_title="Acme Widget W-1 Silicone Product Details and Uses.",
+            meta_keywords=[
+                "Acme Widget W-1",
+                "silicone widget",
+                "Acme product",
+                "general use widget",
+                "W-1 model",
+                "silicone product",
+                "widget specifications",
+                "Acme silicone widget",
+            ],
+            meta_description=(
+                "Explore the Acme Widget W-1 silicone product, including its verified material "
+                "specification and practical details for informed product selection."
+            ),
+            business_meta_title="Acme Widget W-1 Silicone Product Supply Details",
+            business_meta_description=(
+                "Review the Acme Widget W-1 silicone product, including its verified material "
+                "specification and practical details for professional procurement."
+            ),
+        ),
+        overall_confidence=Decimal("0.2"),
     )
 
 
@@ -227,9 +250,26 @@ def test_compatible_generator_accepts_wrapped_output_and_symbolic_confidence() -
     payload["features"] = ["A factual feature"]
     payload["packs"] = [{"pack_size": "Single unit", "price": None}]
     payload["seo"] = {
-        "title": "Acme Widget W-1",
-        "keywords": ["acme widget"],
-        "meta_description": "A silicone widget.",
+        "title": "Acme Widget W-1 Silicone Product Details and Uses.",
+        "keywords": [
+            "Acme Widget W-1",
+            "silicone widget",
+            "Acme product",
+            "general use widget",
+            "W-1 model",
+            "silicone product",
+            "widget specifications",
+            "Acme silicone widget",
+        ],
+        "meta_description": (
+            "Explore the Acme Widget W-1 silicone product, including its verified material "
+            "specification and practical details for informed product selection."
+        ),
+        "business_meta_title": "Acme Widget W-1 Silicone Product Supply Details",
+        "business_meta_description": (
+            "Review the Acme Widget W-1 silicone product, including its verified material "
+            "specification and practical details for professional procurement."
+        ),
     }
     client = FakeChatClient(json.dumps({"data": {"product": payload}}))
     route = CompatibleModelRoute(
@@ -250,7 +290,7 @@ def test_compatible_generator_accepts_wrapped_output_and_symbolic_confidence() -
     assert result.product.business_product_title == "Acme Widget W-1"
     assert result.product.highlights[0].value == "A factual feature"
     assert result.product.packs[0].label == "Single unit"
-    assert result.product.seo.meta_title == "Acme Widget W-1"
+    assert result.product.seo.meta_title == "Acme Widget W-1 Silicone Product Details and Uses."
     assert result.product.overall_confidence == Decimal("0.4")
 
 

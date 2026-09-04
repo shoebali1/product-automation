@@ -1,17 +1,28 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db_session
 from app.models.enums import JobStatus
 from app.publishing import Publisher, get_publisher
+from app.schemas.generated_product import GeneratedProductData
 from app.schemas.generated_product_api import (
+    CatalogTaxonomy,
     ConflictResolutionRequest,
     GeneratedProductDetail,
     GeneratedProductListItem,
     ProductConflictDetail,
+    SurginatalSubmissionResult,
     UpdateGeneratedProductRequest,
+)
+from app.services.surginatal import fetch_surginatal_taxonomy
+from app.services.surginatal_submission import (
+    MAX_IMAGE_BYTES,
+    SubmissionImage,
+    SurginatalSubmissionError,
+    submit_product_to_surginatal,
 )
 from app.services.generated_products import (
     ProductNotFoundError,
@@ -40,6 +51,32 @@ def list_products(
     return list_generated_products(session, status=status)
 
 
+@router.get("/taxonomy/options", response_model=CatalogTaxonomy)
+def get_catalog_taxonomy() -> CatalogTaxonomy:
+    taxonomy = fetch_surginatal_taxonomy()
+    categories = []
+    for category in taxonomy.get("category_data", []):
+        if not category.get("id") or not category.get("name"):
+            continue
+        categories.append(
+            {
+                "id": category["id"],
+                "name": category["name"],
+                "subcategories": [
+                    {"id": item["id"], "name": item["name"]}
+                    for item in category.get("subcategories", [])
+                    if item.get("id") and item.get("name")
+                ],
+            }
+        )
+    brands = [
+        {"id": brand["id"], "name": brand["name"]}
+        for brand in taxonomy.get("brand_data", [])
+        if brand.get("id") and brand.get("name")
+    ]
+    return CatalogTaxonomy(categories=categories, brands=brands)
+
+
 @router.get("/{product_id}", response_model=GeneratedProductDetail)
 def get_product(
     product_id: UUID, session: Session = Depends(get_db_session)
@@ -66,6 +103,68 @@ def update_product(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ProductStateError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/{product_id}/surginatal", response_model=SurginatalSubmissionResult)
+async def submit_product_to_catalog(
+    product_id: UUID,
+    images: list[UploadFile] = File(default=[]),
+    image_titles: list[str] = Form(default=[]),
+    image_alt: list[str] = Form(default=[]),
+    primary_image_index: int | None = Form(default=None),
+    session: Session = Depends(get_db_session),
+) -> SurginatalSubmissionResult:
+    product = get_generated_product(session, product_id)
+    if product is None:
+        raise HTTPException(status_code=404, detail="Generated product was not found")
+    if len(image_titles) != len(images) or len(image_alt) != len(images):
+        raise HTTPException(
+            status_code=422,
+            detail="Every selected local image must have one title and one alt text value",
+        )
+
+    local_images = []
+    for index, image in enumerate(images):
+        content_type = (image.content_type or "").lower()
+        if not content_type.startswith("image/"):
+            raise HTTPException(status_code=422, detail=f"{image.filename} is not an image")
+        content = await image.read(MAX_IMAGE_BYTES + 1)
+        if len(content) > MAX_IMAGE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"{image.filename} exceeds the 15 MB image limit",
+            )
+        local_images.append(
+            SubmissionImage(
+                filename=image.filename or f"local-image-{index + 1}",
+                content=content,
+                content_type=content_type,
+                title=image_titles[index],
+                alt=image_alt[index],
+                primary=primary_image_index == index,
+            )
+        )
+
+    data = GeneratedProductData.model_validate(product.product_data)
+    try:
+        external_id = await run_in_threadpool(
+            submit_product_to_surginatal,
+            data,
+            local_images=local_images,
+            existing_product_id=data.surginatal_product_id,
+        )
+    except SurginatalSubmissionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    stored_data = dict(product.product_data)
+    stored_data["surginatal_product_id"] = external_id
+    product.product_data = stored_data
+    session.commit()
+    return SurginatalSubmissionResult(
+        message="Product saved and submitted to Surginatal",
+        product_id=external_id,
+        product=to_product_detail(product, session),
+    )
 
 
 @router.post("/{product_id}/approve", response_model=GeneratedProductDetail)

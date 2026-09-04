@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     surginatal_api_url: str = "https://surginatal.com/fastapi/api/v1/category/"
     surginatal_api_key: SecretStr | None = None
     surginatal_cache_ttl_seconds: int = 3600
+    surginatal_product_add_url: str = ""
+    surginatal_admin_api_key: SecretStr | None = None
+    surginatal_admin_token: SecretStr | None = None
+    surginatal_submission_timeout_seconds: float = 60.0
 
 
 @lru_cache
